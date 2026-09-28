@@ -1,7 +1,7 @@
-﻿# ClaudeUsageWidget.ps1 — мини-виджет расхода квоты Claude поверх панели задач.
-# Данные: http://<CT 102>:8766/usage.json. Две строки: 5-часовое окно и неделя (Fable).
-# Режимы (двойной клик / меню): 'light' — светофор-кружок, 'bar' — убывающий прогресс-бар (100% = пусто).
-# Окно без рамки, поверх всех, перетаскивается; позиция и режим — в ClaudeUsageWidget.json рядом.
+﻿# ClaudeUsageWidget.ps1 — виджет расхода квоты Claude прямо на панели задач Windows.
+# Две строки: 5-часовое окно и неделя. Режимы: убывающий прогресс-бар / светофор.
+# Источник данных: автономно (API Anthropic + токен Claude Code) или сервер claude-usage (ключ url).
+# Работает в Windows PowerShell 5.1 и PowerShell 7. Настройки — ClaudeUsageWidget.json рядом.
 
 param(
     [string]$Url = '',   # если пусто — берётся из ClaudeUsageWidget.json (ключ url)
@@ -9,7 +9,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-# Add-Type компилирует P/Invoke во временную DLL; %TEMP% не в исключениях Kaspersky — уводим в C:\ClaudeScripts\tmp
+# Add-Type компилирует P/Invoke во временную DLL; %TEMP% часто не в исключениях антивируса — уводим в подпапку tmp рядом со скриптом
 $TmpDir = Join-Path $PSScriptRoot 'tmp'; if (-not (Test-Path $TmpDir)) { New-Item -ItemType Directory -Path $TmpDir | Out-Null }
 $env:TEMP = $TmpDir; $env:TMP = $TmpDir
 Add-Type -AssemblyName System.Windows.Forms
@@ -18,7 +18,7 @@ Add-Type -AssemblyName System.Drawing
 Add-Type -Name Con -Namespace Win32 -MemberDefinition '[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow(); [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n);'
 [Win32.Con]::ShowWindow([Win32.Con]::GetConsoleWindow(), 0) | Out-Null
 # per-monitor DPI awareness v2 — иначе при масштабе >100% Windows растягивает окно битмапом (мыло)
-Add-Type -Name Dpi -Namespace Win32 -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr ctx);'
+Add-Type -Name Dpi -Namespace Win32 -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr ctx); [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);'
 [Win32.Dpi]::SetProcessDpiAwarenessContext([IntPtr]::new(-4)) | Out-Null
 
 $mutex = New-Object System.Threading.Mutex -ArgumentList $false, 'Local\ClaudeUsageWidget'
@@ -28,7 +28,9 @@ $CfgPath = Join-Path $PSScriptRoot 'ClaudeUsageWidget.json'
 $LogPath = Join-Path $PSScriptRoot 'ClaudeUsageWidget.log'
 function Log([string]$m) { try { Add-Content -Path $LogPath -Value ("{0:yyyy-MM-dd HH:mm:ss} {1}" -f (Get-Date), $m) -Encoding utf8 } catch {} }
 
-$script:Cfg = @{ mode = 'bar'; x = -1; y = -1; auto = $true; align = 'left'; url = 'http://SERVER:8766/usage.json' }   # align: left|right — выравнивание текста   # auto — сам встаёт на панель задач левее трея
+$script:Cfg = @{ mode = 'bar'; x = -1; y = -1; auto = $true; align = 'left'; url = ''
+                 poll_sec = 300; plan_end_offset_hours = 9; day_end_hour = 22; yellow_over_pp = 4; red_over_pp = 10
+                 session_window_hours = 5; session_yellow_pct = 80; session_red_pct = 95; session_yellow_over_pp = 10; session_red_over_pp = 25 }   # align: left|right — выравнивание текста   # auto — сам встаёт на панель задач левее трея
 if (Test-Path $CfgPath) { try { (Get-Content $CfgPath -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $script:Cfg[$_.Name] = $_.Value } } catch {} }
 if (-not $Url) { $Url = [string]$script:Cfg.url }
 function Save-Cfg { try { $script:Cfg | ConvertTo-Json | Set-Content $CfgPath -Encoding utf8 } catch {} }
@@ -52,16 +54,168 @@ function Day-Genitive([datetime]$dt) {
 }
 function ToLocal($ra) { if ($ra -is [datetime]) { $ra.ToLocalTime() } else { ([datetimeoffset]::Parse([string]$ra)).LocalDateTime } }
 
-$script:Data = $null; $script:Err = $null
+# ---------- источник данных ----------
+# url пустой  -> автономный режим: виджет сам ходит в API Anthropic с токеном Claude Code
+#                (%USERPROFILE%\.claude\.credentials.json) и сам считает план
+# url задан   -> клиент сервера claude-usage (готовый usage.json)
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+$script:Data = $null; $script:Err = $null; $script:ErrShort = $null
+$script:Raw = $null; $script:RawAt = [datetime]::MinValue; $script:NextFetch = [datetime]::MinValue
+$OAuthClientId = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'          # client_id Claude Code
+$TokenUrl      = 'https://platform.claude.com/v1/oauth/token'
+$UsageApi      = 'https://api.anthropic.com/api/oauth/usage'
+
+function Get-CredPath {
+    $base = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' }
+    Join-Path $base '.credentials.json'
+}
+function Read-Creds {
+    $p = Get-CredPath
+    if (-not (Test-Path $p)) { throw (New-Object System.IO.FileNotFoundException 'nocreds') }
+    $j = Get-Content $p -Raw | ConvertFrom-Json
+    if (-not $j.claudeAiOauth) { throw (New-Object System.IO.FileNotFoundException 'nocreds') }
+    return $j
+}
+function Update-Token {
+    # продлить access-токен по refresh-токену и записать обратно в файл Claude Code (формат сохраняется)
+    $p = Get-CredPath
+    $j = Read-Creds; $o = $j.claudeAiOauth
+    $body = @{ grant_type = 'refresh_token'; refresh_token = [string]$o.refreshToken; client_id = $OAuthClientId; scope = (@($o.scopes) -join ' ') } | ConvertTo-Json
+    $r = Invoke-RestMethod -Uri $TokenUrl -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 20
+    if (-not $r.access_token) { throw 'refresh: пустой ответ' }
+    $o.accessToken = [string]$r.access_token
+    if ($r.refresh_token) { $o.refreshToken = [string]$r.refresh_token }
+    $o.expiresAt = [long]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + [long]$r.expires_in * 1000)
+    $json = $j | ConvertTo-Json -Depth 10 -Compress
+    $tmp = "$p.tmp"
+    [IO.File]::WriteAllText($tmp, $json, (New-Object System.Text.UTF8Encoding $false))   # без BOM — Claude Code читает JSON.parse
+    [IO.File]::Replace($tmp, $p, $null)
+    Log "token refreshed, expires in $($r.expires_in)s"
+}
+function Invoke-UsageApi([string]$token) {
+    Invoke-RestMethod -Uri $UsageApi -TimeoutSec 20 -Headers @{ Authorization = "Bearer $token"; 'anthropic-beta' = 'oauth-2025-04-20'; 'User-Agent' = 'claude-code/2.1.282' }
+}
+function Fetch-Raw {
+    if ($script:Cfg.raw_url) { return Invoke-RestMethod -Uri ([string]$script:Cfg.raw_url) -TimeoutSec 8 }   # отладка: сырой ответ с сервера
+    $o = (Read-Creds).claudeAiOauth
+    if ([long]$o.expiresAt -lt ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + 60000)) { Update-Token; $o = (Read-Creds).claudeAiOauth }
+    try { return Invoke-UsageApi ([string]$o.accessToken) }
+    catch {
+        $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch {}
+        if ($code -eq 401) { Update-Token; return Invoke-UsageApi ([string](Read-Creds).claudeAiOauth.accessToken) }
+        throw
+    }
+}
+
+# ---------- расчёт плана (порт server/usage_server.py) ----------
+function To-Utc($v) { if ($v -is [datetime]) { $v.ToUniversalTime() } else { ([DateTimeOffset]::Parse([string]$v)).UtcDateTime } }
+function Frac([datetime]$t, [datetime]$a, [datetime]$b) { [math]::Max(0.0, [math]::Min(1.0, ($t - $a).TotalSeconds / ($b - $a).TotalSeconds)) }
+
+function Plan-Weekly($item, [datetime]$now) {
+    if (-not $item -or $null -eq $item.percent -or -not $item.resets_at) { return $null }
+    $c = $script:Cfg
+    $used  = [double]$item.percent
+    $reset = To-Utc $item.resets_at
+    $start = $reset.AddDays(-7)
+    $end   = $reset.AddHours(-[double]$c.plan_end_offset_hours)
+    $target = (Frac $now $start $end) * 100
+    $loc = $now.ToLocalTime()
+    $dayEnd = $loc.Date.AddHours([double]$c.day_end_hour)
+    if ($loc -ge $dayEnd) { $dayEnd = $dayEnd.AddDays(1) }
+    $targetDay = (Frac $dayEnd.ToUniversalTime() $start $end) * 100
+    $hoursLeft = [math]::Max(0.0, ($end - $now).TotalHours)
+    @{
+        used_pct = $used; remaining_pct = 100 - $used
+        target_now_pct = $target; delta_pp = $used - $target
+        available_today_pp = $targetDay - $used
+        needed_per_day_pp = $(if ($hoursLeft -gt 0) { (100 - $used) / ($hoursLeft / 24) } else { $null })
+        plan_end = $end; resets_at = $reset
+    }
+}
+function Plan-Session($item, [datetime]$now) {
+    if (-not $item -or $null -eq $item.percent) { return $null }
+    $used = [double]$item.percent
+    $s = @{ used_pct = $used; remaining_pct = 100 - $used; available_pct = 100 - $used; resets_at = $null; active = $false; delta_pp = 0 }
+    if (-not $item.resets_at) { return $s }
+    $reset = To-Utc $item.resets_at
+    $s.resets_at = $reset
+    if ($reset -le $now) { return $s }
+    $start = $reset.AddHours(-[double]$script:Cfg.session_window_hours)
+    $target = (Frac $now $start $reset) * 100
+    $s.active = $true; $s.target_now_pct = $target; $s.delta_pp = $used - $target
+    $s.minutes_to_reset = [int]($reset - $now).TotalMinutes
+    return $s
+}
+function Color-Session($s) {
+    $c = $script:Cfg
+    if (-not $s -or -not $s.active) { return 'green' }
+    $u = $s.used_pct; $d = $s.delta_pp
+    if ($u -ge 100 -or $u -ge $c.session_red_pct -or $d -gt $c.session_red_over_pp) { return 'red' }
+    if ($u -ge $c.session_yellow_pct -or $d -gt $c.session_yellow_over_pp) { return 'yellow' }
+    return 'green'
+}
+function Color-Weekly($f, $w) {
+    $c = $script:Cfg; $lvl = 0
+    foreach ($p in @($f, $w)) {
+        if (-not $p) { continue }
+        if ($p.used_pct -ge 100 -or $p.delta_pp -gt $c.red_over_pp) { $lvl = 2 }
+        elseif ($p.delta_pp -gt $c.yellow_over_pp -and $lvl -lt 1) { $lvl = 1 }
+    }
+    @('green', 'yellow', 'red')[$lvl]
+}
+function Convert-Raw($raw, [datetime]$now) {
+    $sess = $null; $week = $null; $fab = $null
+    foreach ($l in @($raw.limits)) {
+        if (-not $l) { continue }
+        $it = @{ percent = $l.percent; resets_at = $l.resets_at }
+        if ($l.kind -eq 'session') { $sess = $it }
+        elseif ($l.kind -eq 'weekly_all') { $week = $it }
+        elseif ($l.kind -eq 'weekly_scoped' -and [string]$l.scope.model.display_name -eq 'Fable') { $fab = $it }
+    }
+    if (-not $sess -and $raw.five_hour) { $sess = @{ percent = $raw.five_hour.utilization; resets_at = $raw.five_hour.resets_at } }
+    if (-not $week -and $raw.seven_day) { $week = @{ percent = $raw.seven_day.utilization; resets_at = $raw.seven_day.resets_at } }
+    $w = Plan-Weekly $week $now
+    $f = Plan-Weekly $fab $now
+    $label = 'Неделя Fable'
+    if (-not $f) { $f = $w; $label = 'Неделя' }     # нет отдельного лимита Fable — показываем общий недельный
+    $s = Plan-Session $sess $now
+    @{ stale = $false; data_age_sec = 0; session = $s; fable = $f; weekly = $w; weekly_label = $label
+       color_session = (Color-Session $s); color_weekly = (Color-Weekly $f $w) }
+}
+
 function Get-Usage {
-    try { $script:Data = Invoke-RestMethod -Uri $Url -TimeoutSec 8; $script:Err = $null }
-    catch { $script:Err = $_.Exception.Message; Log "fetch error: $($script:Err)" }
+    if ($Url) {   # режим клиента сервера
+        try { $script:Data = Invoke-RestMethod -Uri $Url -TimeoutSec 8; $script:Err = $null; $script:ErrShort = $null }
+        catch { $script:Err = $_.Exception.Message; $script:ErrShort = 'Нет связи с сервером usage'; Log "fetch error: $($script:Err)" }
+        return
+    }
+    $now = [datetime]::UtcNow
+    if ($now -ge $script:NextFetch) {
+        try {
+            $script:Raw = Fetch-Raw; $script:RawAt = $now; $script:Err = $null; $script:ErrShort = $null
+            $script:NextFetch = $now.AddSeconds([double]$script:Cfg.poll_sec)
+        }
+        catch [System.IO.FileNotFoundException] {
+            $script:Err = 'nocreds'; $script:ErrShort = 'Войдите в Claude (правый клик)'
+            $script:NextFetch = $now.AddSeconds(30)
+        }
+        catch {
+            $script:Err = $_.Exception.Message; $script:ErrShort = 'Ошибка запроса к Anthropic'; Log "fetch error: $($script:Err)"
+            $script:NextFetch = $now.AddSeconds(120)
+        }
+    }
+    if ($script:Raw) {
+        $script:Data = Convert-Raw $script:Raw $now
+        $age = ($now - $script:RawAt).TotalSeconds
+        $script:Data.data_age_sec = [int]$age
+        $script:Data.stale = ($age -gt 1800)
+    } else { $script:Data = $null }
 }
 
 # строки для отрисовки: @{ color; remaining; main; sub }
 function Build-Rows {
     $d = $script:Data
-    if ($null -eq $d) { return @(@{ color = 'gray'; remaining = 0; main = 'Нет связи с сервером usage'; sub = '' }) }
+    if ($null -eq $d) { return @(@{ color = 'gray'; remaining = 0; main = $(if ($script:ErrShort) { $script:ErrShort } else { 'Нет данных' }); sub = '' }) }
     $rows = @()
     $s = $d.session
     if ($s -and $s.active) {
@@ -75,7 +229,7 @@ function Build-Rows {
         $reset = ToLocal $f.plan_end
         $rows += @{ color = $(if ($d.stale) { 'gray' } else { [string]$d.color_weekly }); remaining = [double]$f.remaining_pct
                     main = "Осталось {0}% до {1} {2}" -f (Fmt $f.remaining_pct), (Day-Genitive $reset), $reset.ToString('HH:mm')
-                    sub = "Неделя Fable · сегодня {0}%" -f (Signed $f.available_today_pp) }
+                    sub = "{0} · сегодня {1}%" -f $(if ($d.weekly_label) { $d.weekly_label } else { 'Неделя Fable' }), (Signed $f.available_today_pp) }
     }
     if ($d.stale) { $rows[0].sub = "ДАННЫЕ УСТАРЕЛИ ({0} мин)" -f [math]::Round($d.data_age_sec / 60) }
     return $rows
@@ -93,7 +247,8 @@ $form.TransparencyKey = $KeyColor
 $form.Text = 'Claude usage'
 $typ = $form.GetType(); $typ.GetProperty('DoubleBuffered', [Reflection.BindingFlags]'Instance,NonPublic').SetValue($form, $true, $null)
 $form.CreateControl() | Out-Null
-$S = [double]$form.DeviceDpi / 96.0            # масштаб DPI
+$S = [double]([Win32.Dpi]::GetDpiForWindow($form.Handle)) / 96.0   # Form.DeviceDpi в .NET Framework без манифеста всегда 96
+if ($S -le 0) { $S = [double]$form.DeviceDpi / 96.0 }
 function L([double]$v) { [int][math]::Round($v * $S) }   # логические px -> физические
 $Pad = L 3; $W = L 185; $BarH = L 3
 $script:RowH = L 17
@@ -115,7 +270,7 @@ Add-Type -Name Tb -Namespace Win32 -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
 [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(System.Drawing.Point p);
 [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr h, uint f);
-'@ -ReferencedAssemblies System.Drawing.Primitives
+'@ -ReferencedAssemblies $(if ($PSVersionTable.PSEdition -eq 'Core') { 'System.Drawing.Primitives' } else { 'System.Drawing' })
 function Ensure-OnTop {
     # если в центре нашего окна видно чужое (панель задач всплыла выше) — вернуть себя поверх
     if (-not $form.Visible) { return }
@@ -169,7 +324,7 @@ $form.Add_Paint({
     param($sender, $e)
     $g = $e.Graphics
     $g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'AntiAliasGridFit'
-    $rows = Build-Rows
+    try { $rows = Build-Rows } catch { Log "rows: $_"; $rows = @(@{ color = 'gray'; remaining = 0; main = 'Ошибка отображения'; sub = '' }) }
     $y = $Pad
     $mode = [string]$script:Cfg.mode
     $RowH = $script:RowH
@@ -230,6 +385,15 @@ $miAuto2 = New-Object System.Windows.Forms.ToolStripMenuItem 'На панели 
 $miAuto2.Add_Click({ $script:Cfg.auto = $this.Checked; Save-Cfg; Place-Window; $form.Invalidate() }); $menu.Items.Add($miAuto2) | Out-Null
 $miAlign = New-Object System.Windows.Forms.ToolStripMenuItem 'Текст по правому краю'; $miAlign.CheckOnClick = $true; $miAlign.Checked = ($script:Cfg.align -eq 'right')
 $miAlign.Add_Click({ $script:Cfg.align = if ($this.Checked) { 'right' } else { 'left' }; Save-Cfg; $form.Invalidate() }); $menu.Items.Add($miAlign) | Out-Null
+$miLogin = New-Object System.Windows.Forms.ToolStripMenuItem 'Войти в аккаунт Claude…'
+$miLogin.Add_Click({
+    $exe = Join-Path $env:USERPROFILE '.local\bin\claude.exe'
+    if (-not (Test-Path $exe)) { $c = Get-Command claude -ErrorAction SilentlyContinue; if ($c) { $exe = $c.Source } }
+    if (Test-Path $exe) { Start-Process $exe } else { Start-Process 'https://docs.claude.com/en/docs/claude-code/setup' }
+    $script:NextFetch = [datetime]::UtcNow.AddSeconds(20)
+})
+$miLogin.Visible = -not $Url
+$menu.Items.Add($miLogin) | Out-Null
 $miAuto = New-Object System.Windows.Forms.ToolStripMenuItem 'Автозапуск'; $miAuto.CheckOnClick = $true
 $miAuto.Checked = [bool](Get-ItemProperty -Path $RunKey -Name $RunName -ErrorAction SilentlyContinue)
 $miAuto.Add_Click({ if ($this.Checked) { Set-ItemProperty -Path $RunKey -Name $RunName -Value $RunCmd } else { Remove-ItemProperty -Path $RunKey -Name $RunName -ErrorAction SilentlyContinue } })
@@ -240,7 +404,7 @@ $form.ContextMenuStrip = $menu
 
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = $IntervalSec * 1000
-$timer.Add_Tick({ Get-Usage; Place-Window; $form.Invalidate() })
+$timer.Add_Tick({ try { Get-Usage; Place-Window; $form.Invalidate() } catch { Log "tick: $_" } })
 $timer.Start()
 # сторож z-order: панель задач тоже topmost и периодически всплывает над нами
 $topTimer = New-Object System.Windows.Forms.Timer

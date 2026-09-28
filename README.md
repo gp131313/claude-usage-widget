@@ -11,12 +11,33 @@
 Осталось 40% до пятницы 22:00   ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬ (красная — расход опережает план)
 ```
 
+## Быстрая установка (Windows, для всех)
+
+1. Скачайте **`ClaudeUsageWidget-Setup-*.zip`** со страницы [Releases](https://github.com/gp131313/claude-usage-widget/releases/latest).
+2. Распакуйте архив (правый клик → «Извлечь всё») и дважды щёлкните **`Setup.cmd`**.
+3. Следуйте окнам: если Claude Code ещё не установлен, установщик предложит поставить его и войти в ваш аккаунт Claude (Pro/Max).
+
+Всё. Виджет появится на панели задач слева от значков у часов и будет запускаться сам. Сервер не нужен,
+права администратора не нужны. Удаление — меню «Пуск» → «Удалить Claude Usage Widget».
+
+Если Windows покажет «Система Windows защитила ваш компьютер» — «Подробнее» → «Выполнить в любом случае»
+(скрипты не подписаны). Антивирус может ругаться на `Add-Type` с вызовами WinAPI — это ложное срабатывание,
+папку `%LOCALAPPDATA%\ClaudeUsageWidget` можно добавить в исключения.
+
 ## Как это работает
 
 ```
 Claude Code (залогинен) --.credentials.json--> server/usage_server.py --HTTP JSON--> windows/ClaudeUsageWidget.ps1
       (любой Linux-хост)                         /usage.json  /raw.json                (виджет на панели задач)
 ```
+
+Два режима:
+
+- **Автономный** (по умолчанию, ставит `Setup.cmd`): виджет сам раз в 5 минут ходит в API Anthropic с токеном
+  Claude Code из `%USERPROFILE%\.claude\.credentials.json` и сам считает план. Когда токен истекает, виджет
+  продлевает его по refresh-токену (`platform.claude.com/v1/oauth/token`, как это делает сам Claude Code) и
+  записывает обратно в тот же файл.
+- **Клиент сервера**: если в `ClaudeUsageWidget.json` задан `url`, виджет берёт готовый расчёт с сервера:
 
 1. **Сервер** (Python 3, только stdlib) раз в 5 минут дёргает тот же эндпоинт, что и `/usage` в Claude Code —
    `GET https://api.anthropic.com/api/oauth/usage` — OAuth-токеном Claude Code из `~/.claude/.credentials.json`.
@@ -54,12 +75,12 @@ Root не нужен. Порт 8766 должен быть доступен с Wi
 долго простаивает — сервер получит 401, в JSON появится `stale: true`, виджет станет серым. Сервер
 **намеренно не делает refresh сам**, чтобы не сломать сессию Claude Code (refresh-токен ротируется).
 
-### Виджет (Windows 10/11, PowerShell 7)
+### Виджет вручную (Windows 10/11, PowerShell 5.1 или 7)
 
-1. Скопировать `windows/ClaudeUsageWidget.ps1` и `windows/ClaudeUsageWidget.vbs` в одну папку
-   (в `.vbs` поправить путь к `.ps1`, если папка не `C:\ClaudeScripts`).
-2. Первый запуск: `wscript.exe ClaudeUsageWidget.vbs`. Рядом появится `ClaudeUsageWidget.json` — прописать
-   в нём `"url": "http://<host>:8766/usage.json"` и перезапустить.
+1. Скопировать `windows/ClaudeUsageWidget.ps1` и `windows/ClaudeUsageWidget.vbs` в одну папку.
+2. Первый запуск: `wscript.exe ClaudeUsageWidget.vbs`. Без настроек работает автономно (нужен вход в Claude Code).
+   Для режима клиента сервера рядом появится `ClaudeUsageWidget.json` — прописать в нём
+   `"url": "http://<host>:8766/usage.json"` и перезапустить.
 3. Правой кнопкой по виджету -> **Автозапуск**.
 
 Запуск через `.vbs`, а не `pwsh -WindowStyle Hidden`: Windows Terminal, если он терминал по умолчанию,
@@ -71,6 +92,7 @@ Root не нужен. Порт 8766 должен быть доступен с Wi
 - **На панели задач (авто-позиция)**: сам встаёт левее трея, высота = высоте панели. Перетаскивание мышью
   выключает авто-режим.
 - **Текст по правому краю**.
+- **Войти в аккаунт Claude…** (автономный режим): открывает Claude Code для входа.
 - **Автозапуск** (HKCU\...\Run).
 
 ## Технические заметки
@@ -95,6 +117,9 @@ server/
   watchdog.sh            запуск/перезапуск сервиса (для cron)
   install.sh             crontab @reboot + */5, запуск
 windows/
+  Setup.cmd              установщик «нажал и получил» (запускает install.ps1)
+  install.ps1            копирование в %LOCALAPPDATA%, Claude Code + вход, автозапуск, ярлыки
+  uninstall.ps1          удаление (Claude Code не трогает)
   ClaudeUsageWidget.ps1  виджет на панели задач
   ClaudeUsageWidget.vbs  лаунчер со скрытой консолью
   ClaudeUsageTray.ps1    старый вариант: три значка в трее (5ч %, время сброса, неделя)
@@ -103,6 +128,10 @@ windows/
 ## Ограничения
 
 - Только подписочные аккаунты (OAuth Claude Code). Для API-ключей эндпоинт ничего не отдаёт.
+- Эндпоинты usage и продления токена недокументированы; Anthropic может их изменить.
+- Автономный режим продлевает токен сам. Если в этот момент на том же ПК работает Claude Code, возможна гонка
+  за refresh-токен (он одноразовый): в худшем случае Claude Code попросит войти заново. Виджет продлевает токен
+  только когда тот уже истёк, чтобы свести это к минимуму.
 - Панель задач Windows 11 не принимает сторонние deskband-панели, поэтому виджет — отдельное topmost-окно
   без рамки, а не часть панели.
 - Мини-приложения (Win+W) требуют MSIX-пакета с `IWidgetProvider` — не стоит усилий.
@@ -112,6 +141,13 @@ windows/
 Если виджет оказался полезен — можно кинуть на кофе:
 
 - **Dogecoin**: `D7z9UaBsmcV7EqJo5Y5fdLG9xUNw47dNgr`
+
+## English
+
+Shows your real Claude (Pro/Max) quota usage right on the Windows taskbar, with a spend plan: 100% of the weekly
+limit by Friday evening, 100% of the 5-hour window by its reset. Download `ClaudeUsageWidget-Setup-*.zip` from
+Releases, unzip, double-click `Setup.cmd`. Works standalone (reads Claude Code's OAuth token, refreshes it) or as a
+client of the bundled Linux server. UI is in Russian.
 
 ## Лицензия
 
