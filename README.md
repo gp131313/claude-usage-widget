@@ -41,7 +41,7 @@ Claude Code (залогинен) --.credentials.json--> server/usage_server.py -
 ### Сервер (Linux, где залогинен Claude Code)
 
 ```bash
-git clone https://github.com/sgeneralov13/claude-usage-widget.git
+git clone https://github.com/gp131313/claude-usage-widget.git
 cd claude-usage-widget/server
 cp config.example.json config.json      # при желании поправить пороги/часовой пояс
 ./install.sh                            # crontab: @reboot + сторож раз в 5 мин; запускает сервис
