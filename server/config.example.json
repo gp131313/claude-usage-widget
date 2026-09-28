@@ -1,0 +1,15 @@
+{
+  "port": 8766,
+  "poll_sec": 300,
+  "tz": "Europe/Moscow",
+  "plan_end_offset_hours": 9,
+  "day_end_hour": 22,
+  "yellow_over_pp": 4,
+  "red_over_pp": 10,
+  "session_yellow_pct": 80,
+  "session_red_pct": 95,
+  "stale_after_sec": 1800,
+  "session_window_hours": 5,
+  "session_yellow_over_pp": 10,
+  "session_red_over_pp": 25
+}

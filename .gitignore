@@ -1,0 +1,7 @@
+server/config.json
+server/server.log
+server/server.pid
+__pycache__/
+windows/*.json
+windows/*.log
+windows/tmp/
