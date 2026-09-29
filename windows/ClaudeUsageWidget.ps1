@@ -233,6 +233,44 @@ function Build-Rows {
     return $rows
 }
 
+# всплывающая подсказка: подробности по окну, неделе и отдельному лимиту Fable
+function Build-Tip {
+    $d = $script:Data
+    if ($null -eq $d) { return $(if ($script:Err) { "Нет данных: $($script:Err)" } else { 'Нет данных' }) }
+    $ru = [Globalization.CultureInfo]::GetCultureInfo('ru-RU')
+    $deh = 22
+    if ($d.config -and $d.config.day_end_hour) { $deh = [int]$d.config.day_end_hour } elseif ($script:Cfg.day_end_hour) { $deh = [int]$script:Cfg.day_end_hour }
+    $L = New-Object System.Collections.Generic.List[string]
+
+    $s = $d.session
+    $L.Add('5-часовое окно')
+    if ($s -and $s.active -and $s.resets_at) {
+        $r = ToLocal $s.resets_at
+        $m = [int][math]::Max(0, ($r - (Get-Date)).TotalMinutes)
+        $L.Add(('  Осталось {0}% · сброс в {1} (через {2} ч {3:D2} мин)' -f (Fmt $s.remaining_pct), $r.ToString('HH:mm'), [math]::Floor($m / 60), ($m % 60)))
+        if ($null -ne $s.target_now_pct) { $L.Add(('  По плану сейчас было бы потрачено {0}%, у вас {1}%' -f (Fmt $s.target_now_pct), (Fmt $s.used_pct))) }
+    } else { $L.Add('  Окно не начато — доступно 100%') }
+
+    foreach ($row in @(@('Неделя (все модели)', $d.weekly, $true), @('Fable (отдельный лимит)', $d.fable, $false))) {
+        $name = $row[0]; $p = $row[1]; $full = $row[2]
+        if (-not $p) { continue }
+        $L.Add(''); $L.Add($name)
+        $reset = if ($p.resets_at) { ' · сброс ' + (ToLocal $p.resets_at).ToString('ddd HH:mm', $ru) } else { '' }
+        $L.Add(('  Осталось {0}%{1}' -f (Fmt $p.remaining_pct), $reset))
+        if ($full -and $null -ne $p.available_today_pp) {
+            $a = [double]$p.available_today_pp
+            if ($a -ge 0) { $L.Add(('  Сегодня до {0}:00 можно ещё {1}%' -f $deh, (Fmt $a))) }
+            else { $L.Add(('  Сегодня уже сверх плана на {0}%' -f (Fmt (-$a)))) }
+        }
+        if ($full -and $null -ne $p.needed_per_day_pp) { $L.Add(('  Чтобы хватило до пятницы {0}:00 — не больше {1}% в день' -f $deh, (Fmt $p.needed_per_day_pp))) }
+    }
+
+    $at = $null
+    if ($d.data_at) { $at = ToLocal $d.data_at } elseif ($script:RawAt -and $script:RawAt -ne [datetime]::MinValue) { $at = $script:RawAt.ToLocalTime() }
+    if ($at) { $L.Add(''); $L.Add(('Данные на {0}' -f $at.ToString('HH:mm'))) }
+    return ($L -join "`n")
+}
+
 # ---------- окно ----------
 $KeyColor = [System.Drawing.Color]::FromArgb(1, 2, 3)   # цветовой ключ прозрачности — фон окна не рисуется
 $form = New-Object System.Windows.Forms.Form
@@ -402,7 +440,10 @@ $form.ContextMenuStrip = $menu
 
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = $IntervalSec * 1000
-$timer.Add_Tick({ try { Get-Usage; Place-Window; $form.Invalidate() } catch { Log "tick: $_" } })
+$script:Tip = New-Object System.Windows.Forms.ToolTip
+$script:Tip.InitialDelay = 300; $script:Tip.AutoPopDelay = 30000; $script:Tip.ReshowDelay = 100; $script:Tip.ShowAlways = $true   # ShowAlways: окно не активируется
+function Update-Tip { try { $script:Tip.SetToolTip($form, (Build-Tip)) } catch { Log "tip: $_" } }
+$timer.Add_Tick({ try { Get-Usage; Place-Window; Update-Tip; $form.Invalidate() } catch { Log "tick: $_" } })
 $timer.Start()
 # сторож z-order: панель задач тоже topmost и периодически всплывает над нами
 $topTimer = New-Object System.Windows.Forms.Timer
@@ -412,5 +453,6 @@ $topTimer.Start()
 
 Log "start pid=$PID mode=$($script:Cfg.mode)"
 Get-Usage
+Update-Tip
 try { [System.Windows.Forms.Application]::Run($form) }
 finally { $timer.Stop(); $mutex.ReleaseMutex() | Out-Null; Log 'exit' }
