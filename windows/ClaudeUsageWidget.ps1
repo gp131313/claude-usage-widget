@@ -175,12 +175,10 @@ function Convert-Raw($raw, [datetime]$now) {
     if (-not $sess -and $raw.five_hour) { $sess = @{ percent = $raw.five_hour.utilization; resets_at = $raw.five_hour.resets_at } }
     if (-not $week -and $raw.seven_day) { $week = @{ percent = $raw.seven_day.utilization; resets_at = $raw.seven_day.resets_at } }
     $w = Plan-Weekly $week $now
-    $f = Plan-Weekly $fab $now
-    $label = 'Неделя Fable'
-    if (-not $f) { $f = $w; $label = 'Неделя' }     # нет отдельного лимита Fable — показываем общий недельный
+    $f = Plan-Weekly $fab $now                       # отдельный лимит Fable считаем, но не показываем
     $s = Plan-Session $sess $now
-    @{ stale = $false; data_age_sec = 0; session = $s; fable = $f; weekly = $w; weekly_label = $label
-       color_session = (Color-Session $s); color_weekly = (Color-Weekly $f $w) }
+    @{ stale = $false; data_age_sec = 0; session = $s; fable = $f; weekly = $w
+       color_session = (Color-Session $s); color_weekly = (Color-Weekly $null $w) }
 }
 
 function Get-Usage {
@@ -224,12 +222,12 @@ function Build-Rows {
     } else {
         $rows += @{ color = 'green'; remaining = 100; main = 'Окно не начато · 100%'; sub = '5-часовое окно' }
     }
-    $f = $d.fable
+    $f = $d.weekly                                   # вторая строка — общий недельный лимит (все модели)
     if ($f) {
         $reset = ToLocal $f.plan_end
         $rows += @{ color = $(if ($d.stale) { 'gray' } else { [string]$d.color_weekly }); remaining = [double]$f.remaining_pct
                     main = "Осталось {0}% до {1} {2}" -f (Fmt $f.remaining_pct), (Day-Genitive $reset), $reset.ToString('HH:mm')
-                    sub = "{0} · сегодня {1}%" -f $(if ($d.weekly_label) { $d.weekly_label } else { 'Неделя Fable' }), (Signed $f.available_today_pp) }
+                    sub = "Неделя · сегодня {0}%" -f (Signed $f.available_today_pp) }
     }
     if ($d.stale) { $rows[0].sub = "ДАННЫЕ УСТАРЕЛИ ({0} мин)" -f [math]::Round($d.data_age_sec / 60) }
     return $rows

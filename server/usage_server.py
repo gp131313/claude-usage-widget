@@ -297,7 +297,7 @@ def build(cfg):
         if stale:
             cw, rw = "gray", "нет свежих данных"; cs, rs = "gray", "нет свежих данных"
         else:
-            cw, rw = color_weekly(fable, weekly, cfg)
+            cw, rw = color_weekly(None, weekly, cfg)   # только общий недельный лимит
             cs, rs = color_session(sess, cfg)
         color = "red" if "red" in (cw, cs) else ("yellow" if "yellow" in (cw, cs) else cw)
         out.update({
