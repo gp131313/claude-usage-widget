@@ -177,6 +177,16 @@ function Convert-Raw($raw, [datetime]$now) {
     $w = Plan-Weekly $week $now
     $f = Plan-Weekly $fab $now                       # отдельный лимит Fable считаем, но не показываем
     $s = Plan-Session $sess $now
+    if ($w) {   # «потрачено сегодня»: снимок недельного расхода на начало суток хранится в конфиге
+        $u = [double]$w.used_pct; $loc = Get-Date; $today = $loc.ToString('yyyy-MM-dd')
+        if ($script:Cfg.day_date -ne $today -or $null -eq $script:Cfg.day_start) {
+            $script:Cfg.day_date = $today; $script:Cfg.day_start = $u; $script:Cfg.day_since = $loc.ToString('o'); Save-Cfg
+        } elseif ($u -lt [double]$script:Cfg.day_start) {   # недельный сброс посреди дня
+            $script:Cfg.day_start = 0; $script:Cfg.day_since = $loc.ToString('o'); Save-Cfg
+        }
+        $w.spent_today_pp = [math]::Round($u - [double]$script:Cfg.day_start, 1)
+        $w.today_since = [string]$script:Cfg.day_since
+    }
     @{ stale = $false; data_age_sec = 0; session = $s; fable = $f; weekly = $w
        color_session = (Color-Session $s); color_weekly = (Color-Weekly $null $w) }
 }
@@ -257,6 +267,11 @@ function Build-Tip {
         $L.Add(''); $L.Add($name)
         $reset = if ($p.resets_at) { ' · сброс ' + (ToLocal $p.resets_at).ToString('ddd HH:mm', $ru) } else { '' }
         $L.Add(('  Осталось {0}%{1}' -f (Fmt $p.remaining_pct), $reset))
+        if ($full -and $null -ne $p.spent_today_pp) {
+            $since = ''
+            if ($p.today_since) { $t = ToLocal $p.today_since; if ($t.Hour -gt 0 -or $t.Minute -gt 15) { $since = ' (с {0})' -f $t.ToString('HH:mm') } }
+            $L.Add(('  Сегодня уже потрачено {0}%{1}' -f (Fmt $p.spent_today_pp), $since))
+        }
         if ($full -and $null -ne $p.available_today_pp) {
             $a = [double]$p.available_today_pp
             if ($a -ge 0) { $L.Add(('  Сегодня до {0}:00 можно ещё {1}%' -f $deh, (Fmt $a))) }
@@ -265,9 +280,6 @@ function Build-Tip {
         if ($full -and $null -ne $p.needed_per_day_pp) { $L.Add(('  Чтобы хватило до пятницы {0}:00 — не больше {1}% в день' -f $deh, (Fmt $p.needed_per_day_pp))) }
     }
 
-    $at = $null
-    if ($d.data_at) { $at = ToLocal $d.data_at } elseif ($script:RawAt -and $script:RawAt -ne [datetime]::MinValue) { $at = $script:RawAt.ToLocalTime() }
-    if ($at) { $L.Add(''); $L.Add(('Данные на {0}' -f $at.ToString('HH:mm'))) }
     return ($L -join "`n")
 }
 
@@ -437,6 +449,25 @@ $menu.Items.Add($miAuto) | Out-Null
 $menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator)) | Out-Null
 $mi = New-Object System.Windows.Forms.ToolStripMenuItem 'Выход'; $mi.Add_Click({ $form.Close() }); $menu.Items.Add($mi) | Out-Null
 $form.ContextMenuStrip = $menu
+# сводка (та же, что в подсказке) — вверху меню, собирается заново при каждом открытии
+$script:InfoItems = @()
+$script:BoldFont = New-Object System.Drawing.Font($menu.Font, [System.Drawing.FontStyle]::Bold)
+$menu.Add_Opening({
+    try {
+        foreach ($it in $script:InfoItems) { $menu.Items.Remove($it); $it.Dispose() }
+        $list = New-Object System.Collections.Generic.List[System.Windows.Forms.ToolStripItem]
+        foreach ($line in ((Build-Tip) -split "`n")) {
+            if ($line -eq '') { $list.Add((New-Object System.Windows.Forms.ToolStripSeparator)); continue }
+            $it = New-Object System.Windows.Forms.ToolStripMenuItem $line
+            if ($line -notmatch '^\s') { $it.Font = $script:BoldFont }
+            $list.Add($it)
+        }
+        $list.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+        for ($i = 0; $i -lt $list.Count; $i++) { $menu.Items.Insert($i, $list[$i]) }
+        $script:InfoItems = $list.ToArray()
+    } catch { Log "menu: $_" }
+})
+
 
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = $IntervalSec * 1000

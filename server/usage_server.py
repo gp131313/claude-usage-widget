@@ -44,6 +44,37 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
                     stream=sys.stdout)
 log = logging.getLogger("claude-usage")
 
+# снимок недельного расхода на начало суток — чтобы показать «потрачено сегодня»
+DAY = {"date": None, "start": None, "since": None}
+DAY_PATH = os.path.join(HERE, "state.json")
+
+
+def load_day():
+    try:
+        with open(DAY_PATH) as f:
+            DAY.update(json.load(f))
+    except Exception:
+        pass
+
+
+def update_day(data, cfg):
+    w = extract(data)["weekly_all"]
+    if not w or w.get("percent") is None:
+        return
+    used = float(w["percent"])
+    now = datetime.now(ZoneInfo(cfg["tz"]))
+    today = now.date().isoformat()
+    if DAY["date"] != today or DAY["start"] is None:
+        DAY.update(date=today, start=used, since=now.isoformat())
+    elif used < float(DAY["start"]):          # недельный сброс посреди дня — считаем от нуля
+        DAY.update(start=0.0, since=now.isoformat())
+    try:
+        with open(DAY_PATH, "w") as f:
+            json.dump(DAY, f)
+    except Exception:
+        pass
+
+
 STATE = {"raw": None, "raw_at": None, "error": None, "error_at": None, "http_status": None}
 LOCK = threading.Lock()
 
@@ -86,6 +117,7 @@ def poll_loop(cfg):
                 STATE["error"] = None
                 STATE["http_status"] = status
                 STATE["token_expires_at"] = exp
+            update_day(data, cfg)
             log.info("ok: %s", summarize(data))
         except urllib.error.HTTPError as e:
             body = e.read().decode(errors="replace")[:300]
@@ -294,6 +326,9 @@ def build(cfg):
         fable = weekly_plan(ex["weekly_fable"], now, cfg, tz)
         weekly = weekly_plan(ex["weekly_all"], now, cfg, tz)
         sess = session_plan(ex["session"], now, cfg)
+        if weekly and DAY["date"] == now.astimezone(tz).date().isoformat() and DAY["start"] is not None:
+            weekly["spent_today_pp"] = round(weekly["used_pct"] - float(DAY["start"]), 1)
+            weekly["today_since"] = DAY["since"]
         if stale:
             cw, rw = "gray", "нет свежих данных"; cs, rs = "gray", "нет свежих данных"
         else:
@@ -345,6 +380,7 @@ class H(BaseHTTPRequestHandler):
 
 def main():
     cfg = load_cfg()
+    load_day()
     t = threading.Thread(target=poll_loop, args=(cfg,), daemon=True)
     t.start()
     srv = ThreadingHTTPServer((cfg["bind"], cfg["port"]), H)

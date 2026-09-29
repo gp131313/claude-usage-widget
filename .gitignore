@@ -5,3 +5,4 @@ __pycache__/
 windows/*.json
 windows/*.log
 windows/tmp/
+server/state.json
