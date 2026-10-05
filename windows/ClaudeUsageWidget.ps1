@@ -318,8 +318,33 @@ Add-Type -Name Tb -Namespace Win32 -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
 [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(System.Drawing.Point p);
 [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr h, uint f);
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
 '@ -ReferencedAssemblies $(if ($PSVersionTable.PSEdition -eq 'Core') { 'System.Drawing.Primitives' } else { 'System.Drawing' })
+function Test-RdpFullscreen {
+    # активное окно — клиент RDP (mstsc/msrdc), развёрнутый на весь монитор: локальной панели задач не видно
+    $h = [Win32.Tb]::GetForegroundWindow(); if ($h -eq [IntPtr]::Zero) { return $false }
+    $root = [Win32.Tb]::GetAncestor($h, 2); if ($root -eq [IntPtr]::Zero) { $root = $h }
+    $procId = [uint32]0; [Win32.Tb]::GetWindowThreadProcessId($root, [ref]$procId) | Out-Null
+    if ($procId -ne $script:FgPid) {   # имя процесса кэшируем до смены активного окна
+        $script:FgPid = $procId
+        $p = Get-Process -Id $procId -ErrorAction SilentlyContinue
+        $script:FgIsRdp = [bool]($p -and $p.ProcessName -match '^(mstsc|msrdc)$')
+    }
+    if (-not $script:FgIsRdp) { return $false }
+    $r = New-Object Win32.Tb+RECT; [Win32.Tb]::GetWindowRect($root, [ref]$r) | Out-Null
+    $b = [System.Windows.Forms.Screen]::FromHandle($root).Bounds
+    return ($r.L -le $b.Left -and $r.T -le $b.Top -and $r.R -ge $b.Right -and $r.B -ge $b.Bottom)
+}
 function Ensure-OnTop {
+    # на полноэкранной RDP-сессии виджет прячем (иначе он висит поверх удалённого рабочего стола)
+    $rdp = Test-RdpFullscreen
+    if ($rdp -ne [bool]$script:RdpHidden) {
+        $script:RdpHidden = $rdp
+        [Win32.Con]::ShowWindow($form.Handle, $(if ($rdp) { 0 } else { 4 })) | Out-Null   # SW_HIDE / SW_SHOWNOACTIVATE
+        if (-not $rdp) { Place-Window }
+    }
+    if ($rdp) { return }
     # если в центре нашего окна видно чужое (панель задач всплыла выше) — вернуть себя поверх
     if (-not $form.Visible) { return }
     if (-not $script:Probe) { return }   # точка на непрозрачном пикселе (прозрачные пропускают hit-test)
