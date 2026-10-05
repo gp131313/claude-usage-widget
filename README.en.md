@@ -4,6 +4,8 @@
 
 Your real Claude (Pro / Max) usage — right on the Windows taskbar, with a spend plan.
 
+**The widget itself spends none of your limit:** it only reads usage statistics and never sends a request to a model.
+
 The usage page on claude.ai says "On track" by counting linearly to the reset. This project counts differently:
 how much you can spend to land at exactly 100% **by Friday evening** (weekly limit) and **by the end of the
 5-hour window** — and shows the result on the taskbar.
@@ -14,6 +16,14 @@ The top row is the 5-hour window, the bottom row is the week. The bar shrinks as
 green — on plan, yellow and red — spending is ahead of plan.
 
 The widget and the installer are in English or Russian, picked by the Windows display language.
+
+> [!WARNING]
+> **Unofficial tool — use at your own risk.** The widget is not affiliated with Anthropic. It reads the Claude Code
+> sign-in token on your computer, uses it to call an undocumented usage endpoint, and refreshes the token itself
+> when it expires. Anthropic [intends subscription sign-in](https://code.claude.com/docs/en/legal-and-compliance) for Claude Code and its own apps only and
+> restricts its use by third-party software. The terms make no exception for reading usage statistics, so
+> Anthropic may cut off the widget's access to the data or take action on the account. The token is never sent
+> anywhere except Anthropic's servers; all the code is open.
 
 ## Quick install (Windows)
 
