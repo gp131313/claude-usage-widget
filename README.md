@@ -20,7 +20,7 @@
 Claude (Pro/Max).
 
 Есть и тихий вариант — **[ClaudeUsageWidget-Setup-Silent.exe](https://github.com/gp131313/claude-usage-widget/releases/latest/download/ClaudeUsageWidget-Setup-Silent.exe)**:
-запустил — и виджет появился, без единого окна (то же делает `ClaudeUsageWidget-Setup.exe /silent`). Шаг входа
+запустил — и виджет появился, без единого окна (то же делает `ClaudeUsageWidget-Setup.exe /silent`; ключ `/dir=<папка>` задаёт папку установки). Шаг входа
 в Claude он пропускает: если входа нет, виджет покажет «Войдите в Claude» — правый щелчок → «Войти в аккаунт Claude…».
 
 Всё. Виджет появится на панели задач слева от значков у часов и будет запускаться сам. Сервер не нужен,

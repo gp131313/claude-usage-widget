@@ -5,7 +5,8 @@ Add-Type -AssemblyName System.Windows.Forms
 $Title = 'Claude Usage Widget'
 if (-not $Silent -and [System.Windows.Forms.MessageBox]::Show('Удалить Claude Usage Widget?', $Title, 'YesNo', 'Question') -ne 'Yes') { exit 0 }
 
-$dst = Join-Path $env:LOCALAPPDATA 'ClaudeUsageWidget'
+$dst = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ClaudeUsageWidget' -ErrorAction SilentlyContinue).InstallLocation
+if (-not $dst) { $dst = Join-Path $env:LOCALAPPDATA 'ClaudeUsageWidget' }
 Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" |
     Where-Object { $_.CommandLine -like '*ClaudeUsageWidget.ps1*' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }

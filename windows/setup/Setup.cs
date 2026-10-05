@@ -14,8 +14,8 @@ using System.Windows.Forms;
 
 [assembly: AssemblyTitle("Claude Usage Widget Setup")]
 [assembly: AssemblyProduct("Claude Usage Widget")]
-[assembly: AssemblyVersion("1.3.0.0")]
-[assembly: AssemblyFileVersion("1.3.0.0")]
+[assembly: AssemblyVersion("1.3.1.0")]
+[assembly: AssemblyFileVersion("1.3.1.0")]
 
 public static class Setup
 {
@@ -32,6 +32,7 @@ public static class Setup
         {
             string s = a.TrimStart('/', '-').ToLowerInvariant();
             if (s == "silent" || s == "verysilent" || s == "quiet" || s == "s" || s == "q") silent = true;
+            else if (s.StartsWith("dir=") && s.Length > 4) Dir = Path.GetFullPath(a.Substring(a.IndexOf('=') + 1).Trim('"')).TrimEnd('\\');   // /dir=<папка установки>
         }
         if (silent)
         {
@@ -45,10 +46,14 @@ public static class Setup
         return w.ExitCode;
     }
 
-    // распаковать вложенные файлы и выполнить install.ps1 с заданными ключами; возвращает его код выхода
+    public static string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeUsageWidget");
+
+    // распаковать вложенные файлы и выполнить install.ps1 с заданными ключами; возвращает его код выхода.
+    // Распаковка — сразу в папку установки: запуск скриптов из %TEMP% антивирусы блокируют.
     public static int RunInstall(string psArgs)
     {
-        string dir = Path.Combine(Path.GetTempPath(), "ClaudeUsageWidget-Setup-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        string dir = Dir;
+        psArgs += " -Dir \"" + dir + "\"";
         try
         {
             Directory.CreateDirectory(dir);
@@ -71,7 +76,7 @@ public static class Setup
         }
         finally
         {
-            try { Directory.Delete(dir, true); } catch { }
+            try { File.Delete(Path.Combine(dir, "install.ps1")); } catch { }   // остальное — файлы самой программы
         }
     }
 }
@@ -92,7 +97,6 @@ public class Wizard : Form
     Point P(int x, int y) { return new Point(S(x), S(y)); }
     Size Z(int w, int h) { return new Size(S(w), S(h)); }
 
-    static string InstallDir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeUsageWidget"); } }
 
     static bool LoggedIn
     {
@@ -126,7 +130,7 @@ public class Wizard : Form
 
         optPanel = new Panel(); optPanel.Location = P(24, 86); optPanel.Size = Z(452, 196); optPanel.Visible = false;
         Label pathLabel = new Label(); pathLabel.Text = "Папка установки:"; pathLabel.Location = P(0, 0); pathLabel.Size = Z(452, 20);
-        TextBox pathBox = new TextBox(); pathBox.ReadOnly = true; pathBox.Text = InstallDir; pathBox.Location = P(0, 22); pathBox.Size = Z(452, 23); pathBox.TabStop = false;
+        TextBox pathBox = new TextBox(); pathBox.ReadOnly = true; pathBox.Text = Setup.Dir; pathBox.Location = P(0, 22); pathBox.Size = Z(452, 23); pathBox.TabStop = false;
         autoBox = new CheckBox(); autoBox.Text = "Запускать виджет при входе в Windows"; autoBox.Checked = true; autoBox.Location = P(0, 62); autoBox.Size = Z(452, 24);
         Label note = new Label(); note.ForeColor = Color.FromArgb(90, 90, 90); note.Location = P(0, 100); note.Size = Z(452, 90);
         note.Text = "Устанавливается только для вашей учётной записи, права администратора не нужны.\n\n"

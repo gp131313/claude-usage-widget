@@ -5,17 +5,19 @@
 #   3) включает автозапуск, создаёт ярлыки в меню «Пуск», регистрирует виджет в «Приложениях», запускает его.
 # -Silent: без единого окна и без шага входа в Claude (ошибка — в %TEMP%\ClaudeUsageWidget-install.log).
 # -NoFinishBox: без итогового окна «Готово» (его показывает мастер установки). -NoAutostart: без автозапуска.
-param([switch]$Silent, [switch]$NoFinishBox, [switch]$NoAutostart)
+# -Dir: папка установки (по умолчанию %LOCALAPPDATA%\ClaudeUsageWidget).
+param([switch]$Silent, [switch]$NoFinishBox, [switch]$NoAutostart, [string]$Dir)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 $Title = 'Claude Usage Widget'
-$Version = '1.3.0'
+$Version = '1.3.1'
 function Say([string]$m, [string]$icon = 'Information') { if ($Silent) { return }; [void][System.Windows.Forms.MessageBox]::Show($m, $Title, 'OK', $icon) }
 function Ask([string]$m) { if ($Silent) { return $false }; [System.Windows.Forms.MessageBox]::Show($m, $Title, 'YesNo', 'Question') -eq 'Yes' }
 
 try {
     $src = $PSScriptRoot
-    $dst = Join-Path $env:LOCALAPPDATA 'ClaudeUsageWidget'
+    $dst = if ($Dir) { $Dir } else { Join-Path $env:LOCALAPPDATA 'ClaudeUsageWidget' }
+    $inPlace = ([IO.Path]::GetFullPath($src).TrimEnd('\') -eq [IO.Path]::GetFullPath($dst).TrimEnd('\'))   # exe-установщик распаковывает сразу в папку установки
     foreach ($f in 'ClaudeUsageWidget.ps1', 'ClaudeUsageWidget.vbs', 'uninstall.ps1') {
         if (-not (Test-Path (Join-Path $src $f))) { throw "Не найден файл $f. Распакуйте архив целиком и запустите Setup.cmd из распакованной папки." }
     }
@@ -29,7 +31,7 @@ try {
     # 2. скопировать файлы (настройки ClaudeUsageWidget.json при обновлении сохраняются)
     New-Item -ItemType Directory -Path $dst -Force | Out-Null
     foreach ($f in 'ClaudeUsageWidget.ps1', 'ClaudeUsageWidget.vbs', 'uninstall.ps1') {
-        Copy-Item (Join-Path $src $f) (Join-Path $dst $f) -Force
+        if (-not $inPlace) { Copy-Item (Join-Path $src $f) (Join-Path $dst $f) -Force }
     }
     Get-ChildItem $dst -File | Unblock-File   # снять пометку «скачано из интернета»
 
