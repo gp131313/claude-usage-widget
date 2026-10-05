@@ -1,5 +1,5 @@
 ﻿# ClaudeUsageWidget.ps1 — виджет расхода квоты Claude прямо на панели задач Windows.
-# Две строки: 5-часовое окно и неделя. Режимы: убывающий прогресс-бар / светофор.
+# Две строки: 5-часовое окно и неделя, убывающие прогресс-бары.
 # Источник данных: автономно (API Anthropic + токен Claude Code) или сервер claude-usage (ключ url).
 # Работает в Windows PowerShell 5.1 и PowerShell 7. Настройки — ClaudeUsageWidget.json рядом.
 
@@ -28,7 +28,7 @@ $CfgPath = Join-Path $PSScriptRoot 'ClaudeUsageWidget.json'
 $LogPath = Join-Path $PSScriptRoot 'ClaudeUsageWidget.log'
 function Log([string]$m) { try { Add-Content -Path $LogPath -Value ("{0:yyyy-MM-dd HH:mm:ss} {1}" -f (Get-Date), $m) -Encoding utf8 } catch {} }
 
-$script:Cfg = @{ mode = 'bar'; x = -1; y = -1; auto = $true; align = 'left'; url = ''
+$script:Cfg = @{ x = -1; y = -1; auto = $true; align = 'left'; url = ''
                  poll_sec = 300; plan_end_offset_hours = 9; day_end_hour = 22; yellow_over_pp = 4; red_over_pp = 10
                  session_window_hours = 5; session_yellow_pct = 80; session_red_pct = 95; session_yellow_over_pp = 10; session_red_over_pp = 25 }   # align: left|right — выравнивание текста   # auto — сам встаёт на панель задач левее трея
 if (Test-Path $CfgPath) { try { (Get-Content $CfgPath -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $script:Cfg[$_.Name] = $_.Value } } catch {} }
@@ -49,6 +49,8 @@ $BarFill   = [System.Drawing.Color]::FromArgb(90, 150, 230)
 
 function Fmt([object]$v) { if ($null -eq $v) { return '—' }; return ([math]::Round([double]$v)).ToString() }
 function Signed([object]$v) { if ($null -eq $v) { return '—' }; $x = [math]::Round([double]$v); if ($x -gt 0) { "+$x" } else { "$x" } }
+# ровный темп (остаток лимита / оставшиеся дни, пересчитывается при каждом опросе): округляем до 10%, мелкие значения — как есть
+function Pace([object]$v) { $n = [double]$v; if ($n -ge 10) { $n = [math]::Round($n / 10, [MidpointRounding]::AwayFromZero) * 10 }; Fmt $n }
 function Day-Genitive([datetime]$dt) {
     @{ Monday = 'понедельника'; Tuesday = 'вторника'; Wednesday = 'среды'; Thursday = 'четверга'; Friday = 'пятницы'; Saturday = 'субботы'; Sunday = 'воскресенья' }[[string]$dt.DayOfWeek]
 }
@@ -237,7 +239,7 @@ function Build-Rows {
         $reset = ToLocal $f.plan_end
         $rows += @{ color = $(if ($d.stale) { 'gray' } else { [string]$d.color_weekly }); remaining = [double]$f.remaining_pct
                     main = "Осталось {0}% до {1} {2}" -f (Fmt $f.remaining_pct), (Day-Genitive $reset), $reset.ToString('HH:mm')
-                    sub = "Неделя · сегодня {0}%" -f (Signed $f.available_today_pp) }
+                    sub = $(if ($null -ne $f.needed_per_day_pp) { "Неделя · {0}% в день" -f (Pace $f.needed_per_day_pp) } else { 'Неделя' }) }
     }
     if ($d.stale) { $rows[0].sub = "ДАННЫЕ УСТАРЕЛИ ({0} мин)" -f [math]::Round($d.data_age_sec / 60) }
     return $rows
@@ -248,8 +250,6 @@ function Build-Tip {
     $d = $script:Data
     if ($null -eq $d) { return $(if ($script:Err) { "Нет данных: $($script:Err)" } else { 'Нет данных' }) }
     $ru = [Globalization.CultureInfo]::GetCultureInfo('ru-RU')
-    $deh = 22
-    if ($d.config -and $d.config.day_end_hour) { $deh = [int]$d.config.day_end_hour } elseif ($script:Cfg.day_end_hour) { $deh = [int]$script:Cfg.day_end_hour }
     $L = New-Object System.Collections.Generic.List[string]
 
     $s = $d.session
@@ -258,7 +258,6 @@ function Build-Tip {
         $r = ToLocal $s.resets_at
         $m = [int][math]::Max(0, ($r - (Get-Date)).TotalMinutes)
         $L.Add(('  Осталось {0}% · сброс в {1} (через {2} ч {3:D2} мин)' -f (Fmt $s.remaining_pct), $r.ToString('HH:mm'), [math]::Floor($m / 60), ($m % 60)))
-        if ($null -ne $s.target_now_pct) { $L.Add(('  По плану сейчас было бы потрачено {0}%, у вас {1}%' -f (Fmt $s.target_now_pct), (Fmt $s.used_pct))) }
     } else { $L.Add('  Окно не начато — доступно 100%') }
 
     foreach ($row in @(@('Неделя (все модели)', $d.weekly, $true), @('Fable (отдельный лимит)', $d.fable, $false))) {
@@ -267,17 +266,7 @@ function Build-Tip {
         $L.Add(''); $L.Add($name)
         $reset = if ($p.resets_at) { ' · сброс ' + (ToLocal $p.resets_at).ToString('ddd HH:mm', $ru) } else { '' }
         $L.Add(('  Осталось {0}%{1}' -f (Fmt $p.remaining_pct), $reset))
-        if ($full -and $null -ne $p.spent_today_pp) {
-            $since = ''
-            if ($p.today_since) { $t = ToLocal $p.today_since; if ($t.Hour -gt 0 -or $t.Minute -gt 15) { $since = ' (с {0})' -f $t.ToString('HH:mm') } }
-            $L.Add(('  Сегодня уже потрачено {0}%{1}' -f (Fmt $p.spent_today_pp), $since))
-        }
-        if ($full -and $null -ne $p.available_today_pp) {
-            $a = [double]$p.available_today_pp
-            if ($a -ge 0) { $L.Add(('  Сегодня до {0}:00 можно ещё {1}%' -f $deh, (Fmt $a))) }
-            else { $L.Add(('  Сегодня уже сверх плана на {0}%' -f (Fmt (-$a)))) }
-        }
-        if ($full -and $null -ne $p.needed_per_day_pp) { $L.Add(('  Чтобы хватило до пятницы {0}:00 — не больше {1}% в день' -f $deh, (Fmt $p.needed_per_day_pp))) }
+        if ($null -ne $p.needed_per_day_pp) { $L.Add(('  Ровный темп на остаток недели — {0}% в день' -f (Pace $p.needed_per_day_pp))) }
     }
 
     return ($L -join "`n")
@@ -399,39 +388,28 @@ $form.Add_Paint({
     $g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'AntiAliasGridFit'
     try { $rows = Build-Rows } catch { Log "rows: $_"; $rows = @(@{ color = 'gray'; remaining = 0; main = 'Ошибка отображения'; sub = '' }) }
     $y = $Pad
-    $mode = [string]$script:Cfg.mode
     $RowH = $script:RowH
     $lineH = [int]$FontMain.GetHeight($g)
     foreach ($r in $rows) {
         $c = $Colors[$r.color]; if (-not $c) { $c = $Colors.gray }
         $textX = $Pad
-        if ($mode -eq 'light') {
-            $d = L 10
-            $br = New-Object System.Drawing.SolidBrush $c
-            $g.FillEllipse($br, $Pad, $y + [int](($RowH - $d) / 2), $d, $d); $br.Dispose()
-            if ($y -eq $Pad) { $script:Probe = New-Object System.Drawing.Point -ArgumentList ($Pad + [int]($d / 2)), ($y + [int]($RowH / 2)) }
-            $textX = $Pad + $d + (L 5)
-            $tx = if ($script:Cfg.align -eq 'right') { $form.Width - $Pad - (Text-W $g $r.main $FontMain) } else { $textX }
-            Draw-Text $g $r.main $FontMain $TextColor $tx ($y + [int](($RowH - $lineH) / 2))
-        } else {
-            $mainColor = if ($r.remaining -le 0 -or $r.color -eq 'red') { $Colors.red } else { $TextColor }
-            $sw = Text-W $g $r.sub $FontSub; $mw = Text-W $g $r.main $FontMain
-            $right = ($script:Cfg.align -eq 'right')
-            $tx = if ($right) { $form.Width - $Pad - $mw } else { $textX }
-            Draw-Text $g $r.main $FontMain $mainColor $tx $y
-            # подпись — у противоположного края, если влезает
-            if ($textX + $mw + (L 6) + $sw -le $form.Width - $Pad) {
-                $sx = if ($right) { $textX } else { $form.Width - $Pad - $sw }
-                Draw-Text $g $r.sub $FontSub $DimColor $sx ($y + [int](($lineH - $FontSub.GetHeight($g)) / 2))
-            }
-            $bx = $textX; $by = $y + $lineH + (L 1); $bw = $form.Width - $Pad * 2
-            $bb = New-Object System.Drawing.SolidBrush $BarBack
-            $g.FillRectangle($bb, $bx, $by, $bw, $BarH); $bb.Dispose()
-            if ($y -eq $Pad) { $script:Probe = New-Object System.Drawing.Point -ArgumentList ($bx + (L 2)), ($by + [int]($BarH / 2)) }
-            $fillW = [int]([math]::Max(0, [math]::Min(100, $r.remaining)) / 100 * $bw)
-            $fb = New-Object System.Drawing.SolidBrush $c
-            if ($fillW -gt 0) { $g.FillRectangle($fb, ($bx + $bw - $fillW), $by, $fillW, $BarH) }; $fb.Dispose()
+        $mainColor = if ($r.remaining -le 0 -or $r.color -eq 'red') { $Colors.red } else { $TextColor }
+        $sw = Text-W $g $r.sub $FontSub; $mw = Text-W $g $r.main $FontMain
+        $right = ($script:Cfg.align -eq 'right')
+        $tx = if ($right) { $form.Width - $Pad - $mw } else { $textX }
+        Draw-Text $g $r.main $FontMain $mainColor $tx $y
+        # подпись — у противоположного края, если влезает
+        if ($textX + $mw + (L 6) + $sw -le $form.Width - $Pad) {
+            $sx = if ($right) { $textX } else { $form.Width - $Pad - $sw }
+            Draw-Text $g $r.sub $FontSub $DimColor $sx ($y + [int](($lineH - $FontSub.GetHeight($g)) / 2))
         }
+        $bx = $textX; $by = $y + $lineH + (L 1); $bw = $form.Width - $Pad * 2
+        $bb = New-Object System.Drawing.SolidBrush $BarBack
+        $g.FillRectangle($bb, $bx, $by, $bw, $BarH); $bb.Dispose()
+        if ($y -eq $Pad) { $script:Probe = New-Object System.Drawing.Point -ArgumentList ($bx + (L 2)), ($by + [int]($BarH / 2)) }
+        $fillW = [int]([math]::Max(0, [math]::Min(100, $r.remaining)) / 100 * $bw)
+        $fb = New-Object System.Drawing.SolidBrush $c
+        if ($fillW -gt 0) { $g.FillRectangle($fb, ($bx + $bw - $fillW), $by, $fillW, $BarH) }; $fb.Dispose()
         $y += $RowH
     }
 })
@@ -441,17 +419,13 @@ $script:Drag = $null
 $form.Add_MouseDown({ param($s, $e) if ($e.Button -eq 'Left') { $script:Drag = $e.Location } })
 $form.Add_MouseMove({ param($s, $e) if ($script:Drag) { $form.Location = New-Object System.Drawing.Point -ArgumentList ($form.Left + $e.X - $script:Drag.X), ($form.Top + $e.Y - $script:Drag.Y) } })
 $form.Add_MouseUp({ param($s, $e) if ($script:Drag) { $script:Drag = $null; $script:Cfg.x = $form.Left; $script:Cfg.y = $form.Top; $script:Cfg.auto = $false; $miAuto2.Checked = $false; Save-Cfg } })
-$form.Add_MouseDoubleClick({ param($s, $e) if ($e.Button -eq 'Left') { Toggle-Mode } })
 
-function Toggle-Mode { $script:Cfg.mode = if ($script:Cfg.mode -eq 'light') { 'bar' } else { 'light' }; Save-Cfg; $miMode.Text = Mode-Label; $form.Invalidate() }
-function Mode-Label { if ($script:Cfg.mode -eq 'light') { 'Режим: светофор → переключить на прогресс-бар' } else { 'Режим: прогресс-бар → переключить на светофор' } }
 
 # меню
 $RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'; $RunName = 'ClaudeUsageWidget'
 $PwshExe = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe'; if (-not (Test-Path $PwshExe)) { $PwshExe = (Get-Process -Id $PID).Path }
 $RunCmd = 'wscript.exe "{0}"' -f (Join-Path $PSScriptRoot 'ClaudeUsageWidget.vbs')   # автозапуск через VBS-лаунчер (скрытая консоль)
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
-$miMode = New-Object System.Windows.Forms.ToolStripMenuItem (Mode-Label); $miMode.Add_Click({ Toggle-Mode }); $menu.Items.Add($miMode) | Out-Null
 $mi = New-Object System.Windows.Forms.ToolStripMenuItem 'Обновить сейчас'; $mi.Add_Click({ Get-Usage; $form.Invalidate() }); $menu.Items.Add($mi) | Out-Null
 $mi = New-Object System.Windows.Forms.ToolStripMenuItem 'Открыть панель usage на claude.ai'; $mi.Add_Click({ Start-Process 'https://claude.ai/settings/usage' }); $menu.Items.Add($mi) | Out-Null
 $miAuto2 = New-Object System.Windows.Forms.ToolStripMenuItem 'На панели задач (авто-позиция)'; $miAuto2.CheckOnClick = $true; $miAuto2.Checked = [bool]$script:Cfg.auto
@@ -507,7 +481,7 @@ $topTimer.Interval = 1000
 $topTimer.Add_Tick({ try { Ensure-OnTop } catch {} })
 $topTimer.Start()
 
-Log "start pid=$PID mode=$($script:Cfg.mode)"
+Log "start pid=$PID"
 Get-Usage
 Update-Tip
 try { [System.Windows.Forms.Application]::Run($form) }
