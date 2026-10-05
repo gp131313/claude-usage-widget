@@ -10,7 +10,10 @@ param([switch]$Silent, [switch]$NoFinishBox, [switch]$NoAutostart, [string]$Dir)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 $Title = 'Claude Usage Widget'
-$Version = '1.3.1'
+$Version = '1.4.0'
+# язык окон — по языку Windows: русский или английский
+$Ru = ([Globalization.CultureInfo]::CurrentUICulture.TwoLetterISOLanguageName -eq 'ru')
+function T([string]$ru, [string]$en) { if ($Ru) { $ru } else { $en } }
 function Say([string]$m, [string]$icon = 'Information') { if ($Silent) { return }; [void][System.Windows.Forms.MessageBox]::Show($m, $Title, 'OK', $icon) }
 function Ask([string]$m) { if ($Silent) { return $false }; [System.Windows.Forms.MessageBox]::Show($m, $Title, 'YesNo', 'Question') -eq 'Yes' }
 
@@ -19,7 +22,7 @@ try {
     $dst = if ($Dir) { $Dir } else { Join-Path $env:LOCALAPPDATA 'ClaudeUsageWidget' }
     $inPlace = ([IO.Path]::GetFullPath($src).TrimEnd('\') -eq [IO.Path]::GetFullPath($dst).TrimEnd('\'))   # exe-установщик распаковывает сразу в папку установки
     foreach ($f in 'ClaudeUsageWidget.ps1', 'ClaudeUsageWidget.vbs', 'uninstall.ps1') {
-        if (-not (Test-Path (Join-Path $src $f))) { throw "Не найден файл $f. Распакуйте архив целиком и запустите Setup.cmd из распакованной папки." }
+        if (-not (Test-Path (Join-Path $src $f))) { throw (T "Не найден файл $f. Распакуйте архив целиком и запустите Setup.cmd из распакованной папки." "File $f not found. Unpack the whole archive and run Setup.cmd from the unpacked folder.") }
     }
 
     # 1. остановить запущенный виджет (повторная установка / обновление)
@@ -48,8 +51,10 @@ try {
     if (-not $Silent -and -not (Test-Path $cred)) {
         $claude = Find-Claude
         if (-not $claude) {
-            $ok = Ask ("Виджету нужен вход в ваш аккаунт Claude через программу Claude Code (официальная, от Anthropic).`n`n" +
-                       "Claude Code не найден. Установить его сейчас? Потребуется интернет, 1–2 минуты.")
+            $ok = Ask (T ("Виджету нужен вход в ваш аккаунт Claude через программу Claude Code (официальная, от Anthropic).`n`n" +
+                          "Claude Code не найден. Установить его сейчас? Потребуется интернет, 1–2 минуты.") `
+                         ("The widget needs you to be signed in to your Claude account through Claude Code (the official app by Anthropic).`n`n" +
+                          "Claude Code was not found. Install it now? This needs an internet connection and takes 1–2 minutes."))
             if ($ok) {
                 if (-not (Get-Command git -ErrorAction SilentlyContinue) -and (Get-Command winget -ErrorAction SilentlyContinue)) {
                     # Claude Code под Windows использует Git for Windows
@@ -57,18 +62,22 @@ try {
                 }
                 Start-Process powershell.exe -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', 'irm https://claude.ai/install.ps1 | iex' -Wait
                 $claude = Find-Claude
-                if (-not $claude) { Say 'Не удалось установить Claude Code. Виджет будет установлен, но покажет «Войдите в Claude», пока вы не войдёте (правый клик по виджету → «Войти в аккаунт Claude…»).' 'Warning' }
+                if (-not $claude) { Say (T 'Не удалось установить Claude Code. Виджет будет установлен, но покажет «Войдите в Claude», пока вы не войдёте (правый клик по виджету → «Войти в аккаунт Claude…»).' 'Claude Code could not be installed. The widget will be installed, but it will show "Sign in to Claude" until you sign in (right-click the widget → "Sign in to Claude…").') 'Warning' }
             }
         }
         if ($claude) {
-            Say ("Сейчас откроется окно Claude Code.`n`n" +
-                 "1. Выберите вход через аккаунт Claude (подписка Pro/Max).`n" +
-                 "2. Войдите в браузере и разрешите доступ.`n" +
-                 "3. Когда увидите приглашение Claude Code — закройте его окно и нажмите здесь OK.")
+            Say (T ("Сейчас откроется окно Claude Code.`n`n" +
+                    "1. Выберите вход через аккаунт Claude (подписка Pro/Max).`n" +
+                    "2. Войдите в браузере и разрешите доступ.`n" +
+                    "3. Когда увидите приглашение Claude Code — закройте его окно и нажмите здесь OK.") `
+                   ("A Claude Code window will open now.`n`n" +
+                    "1. Choose to sign in with your Claude account (Pro/Max subscription).`n" +
+                    "2. Sign in in the browser and allow access.`n" +
+                    "3. When you see the Claude Code prompt, close its window and click OK here."))
             Start-Process $claude -WorkingDirectory $env:USERPROFILE
-            Say 'Нажмите OK, когда вход будет выполнен.'
+            Say (T 'Нажмите OK, когда вход будет выполнен.' 'Click OK once you have signed in.')
             while (-not (Test-Path $cred)) {
-                if (-not (Ask 'Вход пока не обнаружен. Подождать ещё? (Нет — продолжить без входа; войти можно позже через правый клик по виджету.)')) { break }
+                if (-not (Ask (T 'Вход пока не обнаружен. Подождать ещё? (Нет — продолжить без входа; войти можно позже через правый клик по виджету.)' 'No sign-in detected yet. Keep waiting? (No — continue without signing in; you can sign in later by right-clicking the widget.)'))) { break }
             }
         }
     }
@@ -82,8 +91,9 @@ try {
     $programs = [Environment]::GetFolderPath('Programs')
     $lnk = $sh.CreateShortcut((Join-Path $programs 'Claude Usage Widget.lnk'))
     $lnk.TargetPath = 'wscript.exe'; $lnk.Arguments = '"{0}"' -f $vbs; $lnk.WorkingDirectory = $dst
-    $lnk.Description = 'Расход квоты Claude на панели задач'; $lnk.Save()
-    $lnk = $sh.CreateShortcut((Join-Path $programs 'Удалить Claude Usage Widget.lnk'))
+    $lnk.Description = (T 'Расход квоты Claude на панели задач' 'Claude usage on the taskbar'); $lnk.Save()
+    Remove-Item (Join-Path $programs 'Удалить Claude Usage Widget.lnk'), (Join-Path $programs 'Uninstall Claude Usage Widget.lnk') -Force -ErrorAction SilentlyContinue   # ярлык на другом языке от прошлой установки
+    $lnk = $sh.CreateShortcut((Join-Path $programs (T 'Удалить Claude Usage Widget.lnk' 'Uninstall Claude Usage Widget.lnk')))
     $lnk.TargetPath = 'powershell.exe'
     $lnk.Arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f (Join-Path $dst 'uninstall.ps1')
     $lnk.WorkingDirectory = $dst; $lnk.Save()
@@ -105,12 +115,15 @@ try {
 
     # 6. запуск
     Start-Process wscript.exe -ArgumentList ('"{0}"' -f $vbs)
-    if (-not $NoFinishBox) { Say ("Готово!`n`nВиджет появится на панели задач — слева от значков у часов.`n`n" +
+    if (-not $NoFinishBox) { Say (T ("Готово!`n`nВиджет появится на панели задач — слева от значков у часов.`n`n" +
          "Правый клик по виджету — настройки (выравнивание, вход в аккаунт).`n" +
-         "Удалить: «Параметры» → «Приложения» или меню «Пуск» → «Удалить Claude Usage Widget».") }
+         "Удалить: «Параметры» → «Приложения» или меню «Пуск» → «Удалить Claude Usage Widget».") `
+        ("Done!`n`nThe widget will appear on the taskbar, to the left of the icons near the clock.`n`n" +
+         "Right-click the widget for settings (alignment, sign-in).`n" +
+         "To uninstall: Settings → Apps, or Start menu → Uninstall Claude Usage Widget.")) }
 }
 catch {
     if ($Silent) { try { Add-Content -Path (Join-Path $env:TEMP 'ClaudeUsageWidget-install.log') -Value ("{0:yyyy-MM-dd HH:mm:ss} {1}" -f (Get-Date), $_.Exception.Message) -Encoding UTF8 } catch {} }
-    Say ("Установка не удалась:`n`n" + $_.Exception.Message) 'Error'
+    Say ((T "Установка не удалась:`n`n" "Installation failed:`n`n") + $_.Exception.Message) 'Error'
     exit 1
 }

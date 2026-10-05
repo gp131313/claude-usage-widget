@@ -14,12 +14,15 @@ using System.Windows.Forms;
 
 [assembly: AssemblyTitle("Claude Usage Widget Setup")]
 [assembly: AssemblyProduct("Claude Usage Widget")]
-[assembly: AssemblyVersion("1.3.1.0")]
-[assembly: AssemblyFileVersion("1.3.1.0")]
+[assembly: AssemblyVersion("1.4.0.0")]
+[assembly: AssemblyFileVersion("1.4.0.0")]
 
 public static class Setup
 {
     public const string Title = "Claude Usage Widget";
+    // язык окон — по языку Windows: русский или английский
+    public static bool Ru = System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "ru";
+    public static string T(string ru, string en) { return Ru ? ru : en; }
 
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
 
@@ -92,6 +95,7 @@ public class Wizard : Form
     CheckBox autoBox;
     ProgressBar bar;
     Button back, next, cancel;
+    static string T(string ru, string en) { return Setup.T(ru, en); }
     float scale = 1F;
     int S(int v) { return (int)Math.Round(v * scale); }
     Point P(int x, int y) { return new Point(S(x), S(y)); }
@@ -114,7 +118,7 @@ public class Wizard : Form
         AutoScaleMode = AutoScaleMode.None;   // масштабируем сами: координаты ниже — в логических px (96 dpi)
         using (Graphics g = Graphics.FromHwnd(IntPtr.Zero)) scale = g.DpiX / 96F;
         ClientSize = Z(500, 344);
-        Text = "Установка " + Setup.Title;
+        Text = T("Установка ", "Setup — ") + Setup.Title;
         Font = new Font("Segoe UI", 9F);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false; MinimizeBox = false;
@@ -129,20 +133,22 @@ public class Wizard : Form
         body = new Label(); body.Location = P(24, 86); body.Size = Z(452, 196);
 
         optPanel = new Panel(); optPanel.Location = P(24, 86); optPanel.Size = Z(452, 196); optPanel.Visible = false;
-        Label pathLabel = new Label(); pathLabel.Text = "Папка установки:"; pathLabel.Location = P(0, 0); pathLabel.Size = Z(452, 20);
+        Label pathLabel = new Label(); pathLabel.Text = T("Папка установки:", "Install folder:"); pathLabel.Location = P(0, 0); pathLabel.Size = Z(452, 20);
         TextBox pathBox = new TextBox(); pathBox.ReadOnly = true; pathBox.Text = Setup.Dir; pathBox.Location = P(0, 22); pathBox.Size = Z(452, 23); pathBox.TabStop = false;
-        autoBox = new CheckBox(); autoBox.Text = "Запускать виджет при входе в Windows"; autoBox.Checked = true; autoBox.Location = P(0, 62); autoBox.Size = Z(452, 24);
+        autoBox = new CheckBox(); autoBox.Text = T("Запускать виджет при входе в Windows", "Start the widget when I sign in to Windows"); autoBox.Checked = true; autoBox.Location = P(0, 62); autoBox.Size = Z(452, 24);
         Label note = new Label(); note.ForeColor = Color.FromArgb(90, 90, 90); note.Location = P(0, 100); note.Size = Z(452, 90);
-        note.Text = "Устанавливается только для вашей учётной записи, права администратора не нужны.\n\n"
-                  + "Удалить можно в любой момент: «Параметры» → «Приложения» → " + Setup.Title + ".";
+        note.Text = T("Устанавливается только для вашей учётной записи, права администратора не нужны.\n\n"
+                    + "Удалить можно в любой момент: «Параметры» → «Приложения» → " + Setup.Title + ".",
+                      "Installed for your user account only; no administrator rights are needed.\n\n"
+                    + "You can uninstall it at any time: Settings → Apps → " + Setup.Title + ".");
         optPanel.Controls.Add(pathLabel); optPanel.Controls.Add(pathBox); optPanel.Controls.Add(autoBox); optPanel.Controls.Add(note);
 
         bar = new ProgressBar(); bar.Style = ProgressBarStyle.Marquee; bar.MarqueeAnimationSpeed = 30; bar.Location = P(24, 126); bar.Size = Z(452, 18); bar.Visible = false;
 
         Label line2 = new Label(); line2.BorderStyle = BorderStyle.Fixed3D; line2.Location = P(0, 292); line2.Size = Z(500, 2);
-        back = new Button(); back.Text = "< Назад"; back.Location = P(206, 306); back.Size = Z(88, 26);
+        back = new Button(); back.Text = T("< Назад", "< Back"); back.Location = P(206, 306); back.Size = Z(88, 26);
         next = new Button(); next.Location = P(300, 306); next.Size = Z(88, 26);
-        cancel = new Button(); cancel.Text = "Отмена"; cancel.Location = P(400, 306); cancel.Size = Z(88, 26);
+        cancel = new Button(); cancel.Text = T("Отмена", "Cancel"); cancel.Location = P(400, 306); cancel.Size = Z(88, 26);
         back.Click += delegate { ShowPage(0); };
         next.Click += delegate { if (page == 0) ShowPage(1); else if (page == 1) StartInstall(); else Close(); };
         cancel.Click += delegate { Close(); };
@@ -170,38 +176,44 @@ public class Wizard : Form
         switch (p)
         {
             case 0:
-                head.Text = "Установка " + Setup.Title;
-                sub.Text = "Расход квоты Claude — на панели задач Windows";
-                body.Text = "Виджет показывает прямо на панели задач, сколько квоты Claude (Pro/Max) осталось в 5-часовом окне "
-                          + "и на неделю, и какой темп расхода позволит дотянуть до конца недели.\n\n"
-                          + "Данные берутся из вашего входа в Claude Code. Если вход ещё не выполнен, установщик поможет это сделать.\n\n"
-                          + "Нажмите «Далее», чтобы продолжить.";
-                next.Text = "Далее >";
+                head.Text = T("Установка ", "Welcome to ") + Setup.Title + T("", " Setup");
+                sub.Text = T("Расход квоты Claude — на панели задач Windows", "Your Claude usage — on the Windows taskbar");
+                body.Text = T("Виджет показывает прямо на панели задач, сколько квоты Claude (Pro/Max) осталось в 5-часовом окне "
+                            + "и на неделю, и какой темп расхода позволит дотянуть до конца недели.\n\n"
+                            + "Данные берутся из вашего входа в Claude Code. Если вход ещё не выполнен, установщик поможет это сделать.\n\n"
+                            + "Нажмите «Далее», чтобы продолжить.",
+                              "The widget shows right on the taskbar how much of your Claude (Pro/Max) limit is left in the 5-hour window "
+                            + "and for the week, and what pace of spending will last you until the end of the week.\n\n"
+                            + "The data comes from your Claude Code sign-in. If you are not signed in yet, Setup will help you do it.\n\n"
+                            + "Click Next to continue.");
+                next.Text = T("Далее >", "Next >");
                 break;
             case 1:
-                head.Text = "Параметры установки";
-                sub.Text = "Проверьте параметры и нажмите «Установить»";
-                next.Text = "Установить";
+                head.Text = T("Параметры установки", "Installation options");
+                sub.Text = T("Проверьте параметры и нажмите «Установить»", "Review the options and click Install");
+                next.Text = T("Установить", "Install");
                 break;
             case 2:
-                head.Text = "Установка";
-                sub.Text = "Подождите, это займёт несколько секунд";
-                body.Text = "Копирование файлов и настройка…";
+                head.Text = T("Установка", "Installing");
+                sub.Text = T("Подождите, это займёт несколько секунд", "Please wait, this takes a few seconds");
+                body.Text = T("Копирование файлов и настройка…", "Copying files and setting up…");
                 break;
             case 3:
-                head.Text = "Установка завершена";
-                sub.Text = Setup.Title + " установлен";
-                string auto = autoBox.Checked ? " и будет запускаться сам при входе в Windows" : "";
+                head.Text = T("Установка завершена", "Installation complete");
+                sub.Text = Setup.Title + T(" установлен", " is installed");
+                string auto = autoBox.Checked ? T(" и будет запускаться сам при входе в Windows", " and will start by itself when you sign in to Windows") : "";
                 if (LoggedIn)
-                    body.Text = "Виджет уже на панели задач — слева от значков у часов" + auto + ".\n\n"
-                              + "Правый щелчок по виджету — настройки.\n\n"
-                              + "Удаление: «Параметры» → «Приложения» → " + Setup.Title + ".";
+                    body.Text = T("Виджет уже на панели задач — слева от значков у часов", "The widget is already on the taskbar, to the left of the icons near the clock") + auto + ".\n\n"
+                              + T("Правый щелчок по виджету — настройки.\n\n", "Right-click the widget for settings.\n\n")
+                              + T("Удаление: «Параметры» → «Приложения» → ", "To uninstall: Settings → Apps → ") + Setup.Title + ".";
                 else
-                    body.Text = "Виджет уже на панели задач — слева от значков у часов" + auto + ".\n\n"
-                              + "Вход в Claude пока не выполнен, поэтому вместо цифр виджет показывает «Войдите в Claude». "
-                              + "Щёлкните по нему правой кнопкой и выберите «Войти в аккаунт Claude…».\n\n"
-                              + "Удаление: «Параметры» → «Приложения» → " + Setup.Title + ".";
-                next.Text = "Готово";
+                    body.Text = T("Виджет уже на панели задач — слева от значков у часов", "The widget is already on the taskbar, to the left of the icons near the clock") + auto + ".\n\n"
+                              + T("Вход в Claude пока не выполнен, поэтому вместо цифр виджет показывает «Войдите в Claude». "
+                                + "Щёлкните по нему правой кнопкой и выберите «Войти в аккаунт Claude…».\n\n",
+                                  "You are not signed in to Claude yet, so the widget shows \"Sign in to Claude\" instead of numbers. "
+                                + "Right-click it and choose \"Sign in to Claude…\".\n\n")
+                              + T("Удаление: «Параметры» → «Приложения» → ", "To uninstall: Settings → Apps → ") + Setup.Title + ".";
+                next.Text = T("Готово", "Finish");
                 next.Focus();
                 break;
         }
@@ -225,7 +237,7 @@ public class Wizard : Form
         if (code != 0)
         {
             // об ошибке внутри install.ps1 он уже сообщил сам; здесь — только сбой запуска
-            if (error != null) MessageBox.Show(this, "Установка не удалась:\n\n" + error, Setup.Title, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (error != null) MessageBox.Show(this, T("Установка не удалась:\n\n", "Installation failed:\n\n") + error, Setup.Title, MessageBoxButtons.OK, MessageBoxIcon.Error);
             Close();
             return;
         }

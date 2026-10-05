@@ -8,20 +8,19 @@ The usage page on claude.ai says "On track" by counting linearly to the reset. T
 how much you can spend to land at exactly 100% **by Friday evening** (weekly limit) and **by the end of the
 5-hour window** — and shows the result on the taskbar.
 
-![The widget on the Windows taskbar: what is left of the 5-hour window and of the weekly limit](docs/widget-taskbar.png)
+![The widget on the Windows taskbar: what is left of the 5-hour window and of the weekly limit](docs/widget-taskbar-en.png)
 
 The top row is the 5-hour window, the bottom row is the week. The bar shrinks as you spend and changes colour:
 green — on plan, yellow and red — spending is ahead of plan.
 
-> The widget and the installer are in Russian only for now. The rows read "NN% left until HH:MM" and
-> "NN% left until Friday HH:MM".
+The widget and the installer are in English or Russian, picked by the Windows display language.
 
 ## Quick install (Windows)
 
 1. Download **[ClaudeUsageWidget-Setup.exe](https://github.com/gp131313/claude-usage-widget/releases/latest/download/ClaudeUsageWidget-Setup.exe)**.
 2. Run it and click through the wizard: Next → Install → Finish.
 
-<p><img src="docs/setup-wizard.png" width="420" alt="Setup wizard: welcome page"> <img src="docs/setup-options.png" width="420" alt="Setup wizard: options page"></p>
+<p><img src="docs/setup-wizard-en.png" width="420" alt="Setup wizard: welcome page"> <img src="docs/setup-options-en.png" width="420" alt="Setup wizard: options page"></p>
 
 If you are not signed in to Claude Code yet, the installer offers to install Claude Code and sign in to your
 Claude account (Pro/Max).
@@ -29,7 +28,7 @@ Claude account (Pro/Max).
 There is also a silent installer — **[ClaudeUsageWidget-Setup-Silent.exe](https://github.com/gp131313/claude-usage-widget/releases/latest/download/ClaudeUsageWidget-Setup-Silent.exe)**:
 run it and the widget appears, with no windows at all (`ClaudeUsageWidget-Setup.exe /silent` does the same;
 `/dir=<folder>` sets the install folder). It skips the Claude sign-in step: if you are not signed in, the widget
-shows a "sign in" prompt — right-click it and pick the sign-in item.
+shows "Sign in to Claude" — right-click it → "Sign in to Claude…".
 
 That's it. The widget sits on the taskbar to the left of the tray icons and starts with Windows. No server and
 no administrator rights are needed. To uninstall, use Settings → Apps, or the uninstall shortcut in the Start menu.
@@ -115,6 +114,8 @@ terminal, ignores that flag and shows a console window; it does respect the hidd
 
 ## Technical notes
 
+- **Language**: English or Russian, by the Windows display language; to force one, set `"lang": "en"` or
+  `"lang": "ru"` in `ClaudeUsageWidget.json`.
 - **DPI**: the process declares per-monitor DPI awareness v2; all sizes are logical px x DPI. Without it, at
   scaling above 100% Windows stretches the window as a bitmap and it gets blurry.
 - **Transparency**: `TransparencyKey`. A side effect is that ClearType produces colour fringes on colour-keyed

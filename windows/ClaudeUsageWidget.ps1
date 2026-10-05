@@ -34,6 +34,10 @@ $script:Cfg = @{ x = -1; y = -1; auto = $true; align = 'left'; url = ''
 if (Test-Path $CfgPath) { try { (Get-Content $CfgPath -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $script:Cfg[$_.Name] = $_.Value } } catch {} }
 if (-not $Url) { $Url = [string]$script:Cfg.url }
 function Save-Cfg { try { $script:Cfg | ConvertTo-Json | Set-Content $CfgPath -Encoding utf8 } catch {} }
+# язык интерфейса: ключ lang в настройках (ru|en) или язык Windows; всё, что не русский, — английский
+$script:Lang = [string]$script:Cfg.lang; if ($script:Lang -notin 'ru', 'en') { $script:Lang = if ([Globalization.CultureInfo]::CurrentUICulture.TwoLetterISOLanguageName -eq 'ru') { 'ru' } else { 'en' } }
+$script:Cult = [Globalization.CultureInfo]::GetCultureInfo($(if ($script:Lang -eq 'ru') { 'ru-RU' } else { 'en-US' }))
+function T([string]$ru, [string]$en) { if ($script:Lang -eq 'ru') { $ru } else { $en } }
 
 $Colors = @{
     green  = [System.Drawing.Color]::FromArgb(46, 204, 64)
@@ -52,6 +56,7 @@ function Signed([object]$v) { if ($null -eq $v) { return '—' }; $x = [math]::R
 # ровный темп (остаток лимита / оставшиеся дни, пересчитывается при каждом опросе): округляем до 10%, мелкие значения — как есть
 function Pace([object]$v) { $n = [double]$v; if ($n -ge 10) { $n = [math]::Round($n / 10, [MidpointRounding]::AwayFromZero) * 10 }; Fmt $n }
 function Day-Genitive([datetime]$dt) {
+    if ($script:Lang -ne 'ru') { return $dt.ToString('dddd', $script:Cult) }
     @{ Monday = 'понедельника'; Tuesday = 'вторника'; Wednesday = 'среды'; Thursday = 'четверга'; Friday = 'пятницы'; Saturday = 'субботы'; Sunday = 'воскресенья' }[[string]$dt.DayOfWeek]
 }
 function ToLocal($ra) { if ($ra -is [datetime]) { $ra.ToLocalTime() } else { ([datetimeoffset]::Parse([string]$ra)).LocalDateTime } }
@@ -84,7 +89,7 @@ function Update-Token {
     $j = Read-Creds; $o = $j.claudeAiOauth
     $body = @{ grant_type = 'refresh_token'; refresh_token = [string]$o.refreshToken; client_id = $OAuthClientId; scope = (@($o.scopes) -join ' ') } | ConvertTo-Json
     $r = Invoke-RestMethod -Uri $TokenUrl -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 20
-    if (-not $r.access_token) { throw 'refresh: пустой ответ' }
+    if (-not $r.access_token) { throw (T 'refresh: пустой ответ' 'refresh: empty response') }
     $o.accessToken = [string]$r.access_token
     if ($r.refresh_token) { $o.refreshToken = [string]$r.refresh_token }
     $o.expiresAt = [long]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + [long]$r.expires_in * 1000)
@@ -196,7 +201,7 @@ function Convert-Raw($raw, [datetime]$now) {
 function Get-Usage {
     if ($Url) {   # режим клиента сервера
         try { $script:Data = Invoke-RestMethod -Uri $Url -TimeoutSec 8; $script:Err = $null; $script:ErrShort = $null }
-        catch { $script:Err = $_.Exception.Message; $script:ErrShort = 'Нет связи с сервером usage'; Log "fetch error: $($script:Err)" }
+        catch { $script:Err = $_.Exception.Message; $script:ErrShort = (T 'Нет связи с сервером usage' 'Usage server unreachable'); Log "fetch error: $($script:Err)" }
         return
     }
     $now = [datetime]::UtcNow
@@ -206,11 +211,11 @@ function Get-Usage {
             $script:NextFetch = $now.AddSeconds([double]$script:Cfg.poll_sec)
         }
         catch [System.IO.FileNotFoundException] {
-            $script:Err = 'nocreds'; $script:ErrShort = 'Войдите в Claude (правый клик)'
+            $script:Err = 'nocreds'; $script:ErrShort = (T 'Войдите в Claude (правый клик)' 'Sign in to Claude (right-click)')
             $script:NextFetch = $now.AddSeconds(30)
         }
         catch {
-            $script:Err = $_.Exception.Message; $script:ErrShort = 'Ошибка запроса к Anthropic'; Log "fetch error: $($script:Err)"
+            $script:Err = $_.Exception.Message; $script:ErrShort = (T 'Ошибка запроса к Anthropic' 'Anthropic request failed'); Log "fetch error: $($script:Err)"
             $script:NextFetch = $now.AddSeconds(120)
         }
     }
@@ -225,48 +230,47 @@ function Get-Usage {
 # строки для отрисовки: @{ color; remaining; main; sub }
 function Build-Rows {
     $d = $script:Data
-    if ($null -eq $d) { return @(@{ color = 'gray'; remaining = 0; main = $(if ($script:ErrShort) { $script:ErrShort } else { 'Нет данных' }); sub = '' }) }
+    if ($null -eq $d) { return @(@{ color = 'gray'; remaining = 0; main = $(if ($script:ErrShort) { $script:ErrShort } else { (T 'Нет данных' 'No data') }); sub = '' }) }
     $rows = @()
     $s = $d.session
     if ($s -and $s.active) {
         $rows += @{ color = $(if ($d.stale) { 'gray' } else { [string]$d.color_session }); remaining = [double]$s.remaining_pct
-                    main = "Осталось {0}% до {1}" -f (Fmt $s.remaining_pct), (ToLocal $s.resets_at).ToString('HH:mm'); sub = '5-часовое окно' }
+                    main = (T 'Осталось {0}% до {1}' '{0}% left until {1}') -f (Fmt $s.remaining_pct), (ToLocal $s.resets_at).ToString('HH:mm'); sub = (T '5-часовое окно' '5-hour window') }
     } else {
-        $rows += @{ color = 'green'; remaining = 100; main = 'Окно не начато · 100%'; sub = '5-часовое окно' }
+        $rows += @{ color = 'green'; remaining = 100; main = (T 'Окно не начато · 100%' 'Window not started · 100%'); sub = (T '5-часовое окно' '5-hour window') }
     }
     $f = $d.weekly                                   # вторая строка — общий недельный лимит (все модели)
     if ($f) {
         $reset = ToLocal $f.plan_end
         $rows += @{ color = $(if ($d.stale) { 'gray' } else { [string]$d.color_weekly }); remaining = [double]$f.remaining_pct
-                    main = "Осталось {0}% до {1} {2}" -f (Fmt $f.remaining_pct), (Day-Genitive $reset), $reset.ToString('HH:mm')
-                    sub = $(if ($null -ne $f.needed_per_day_pp) { "Неделя · {0}% в день" -f (Pace $f.needed_per_day_pp) } else { 'Неделя' }) }
+                    main = (T 'Осталось {0}% до {1} {2}' '{0}% left until {1} {2}') -f (Fmt $f.remaining_pct), (Day-Genitive $reset), $reset.ToString('HH:mm')
+                    sub = $(if ($null -ne $f.needed_per_day_pp) { (T 'Неделя · {0}% в день' 'Week · {0}%/day') -f (Pace $f.needed_per_day_pp) } else { (T 'Неделя' 'Week') }) }
     }
-    if ($d.stale) { $rows[0].sub = "ДАННЫЕ УСТАРЕЛИ ({0} мин)" -f [math]::Round($d.data_age_sec / 60) }
+    if ($d.stale) { $rows[0].sub = (T 'ДАННЫЕ УСТАРЕЛИ ({0} мин)' 'STALE DATA ({0} min)') -f [math]::Round($d.data_age_sec / 60) }
     return $rows
 }
 
 # всплывающая подсказка: подробности по окну, неделе и отдельному лимиту Fable
 function Build-Tip {
     $d = $script:Data
-    if ($null -eq $d) { return $(if ($script:Err) { "Нет данных: $($script:Err)" } else { 'Нет данных' }) }
-    $ru = [Globalization.CultureInfo]::GetCultureInfo('ru-RU')
+    if ($null -eq $d) { return $(if ($script:Err) { ((T 'Нет данных' 'No data') + ": $($script:Err)") } else { (T 'Нет данных' 'No data') }) }
     $L = New-Object System.Collections.Generic.List[string]
 
     $s = $d.session
-    $L.Add('5-часовое окно')
+    $L.Add((T '5-часовое окно' '5-hour window'))
     if ($s -and $s.active -and $s.resets_at) {
         $r = ToLocal $s.resets_at
         $m = [int][math]::Max(0, ($r - (Get-Date)).TotalMinutes)
-        $L.Add(('  Осталось {0}% · сброс в {1} (через {2} ч {3:D2} мин)' -f (Fmt $s.remaining_pct), $r.ToString('HH:mm'), [math]::Floor($m / 60), ($m % 60)))
-    } else { $L.Add('  Окно не начато — доступно 100%') }
+        $L.Add(((T '  Осталось {0}% · сброс в {1} (через {2} ч {3:D2} мин)' '  {0}% left · resets at {1} (in {2} h {3:D2} min)') -f (Fmt $s.remaining_pct), $r.ToString('HH:mm'), [math]::Floor($m / 60), ($m % 60)))
+    } else { $L.Add((T '  Окно не начато — доступно 100%' '  Window not started — 100% available')) }
 
-    foreach ($row in @(@('Неделя (все модели)', $d.weekly, $true), @('Fable (отдельный лимит)', $d.fable, $false))) {
+    foreach ($row in @(@((T 'Неделя (все модели)' 'Week (all models)'), $d.weekly, $true), @((T 'Fable (отдельный лимит)' 'Fable (separate limit)'), $d.fable, $false))) {
         $name = $row[0]; $p = $row[1]; $full = $row[2]
         if (-not $p) { continue }
         $L.Add(''); $L.Add($name)
-        $reset = if ($p.resets_at) { ' · сброс ' + (ToLocal $p.resets_at).ToString('ddd HH:mm', $ru) } else { '' }
-        $L.Add(('  Осталось {0}%{1}' -f (Fmt $p.remaining_pct), $reset))
-        if ($null -ne $p.needed_per_day_pp) { $L.Add(('  Ровный темп на остаток недели — {0}% в день' -f (Pace $p.needed_per_day_pp))) }
+        $reset = if ($p.resets_at) { (T ' · сброс ' ' · resets ') + (ToLocal $p.resets_at).ToString('ddd HH:mm', $script:Cult) } else { '' }
+        $L.Add(((T '  Осталось {0}%{1}' '  {0}% left{1}') -f (Fmt $p.remaining_pct), $reset))
+        if ($null -ne $p.needed_per_day_pp) { $L.Add(((T '  Ровный темп на остаток недели — {0}% в день' '  Even pace for the rest of the week — {0}% per day') -f (Pace $p.needed_per_day_pp))) }
     }
 
     return ($L -join "`n")
@@ -386,7 +390,7 @@ $form.Add_Paint({
     param($sender, $e)
     $g = $e.Graphics
     $g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'AntiAliasGridFit'
-    try { $rows = Build-Rows } catch { Log "rows: $_"; $rows = @(@{ color = 'gray'; remaining = 0; main = 'Ошибка отображения'; sub = '' }) }
+    try { $rows = Build-Rows } catch { Log "rows: $_"; $rows = @(@{ color = 'gray'; remaining = 0; main = (T 'Ошибка отображения' 'Display error'); sub = '' }) }
     $y = $Pad
     $RowH = $script:RowH
     $lineH = [int]$FontMain.GetHeight($g)
@@ -426,13 +430,13 @@ $RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'; $RunName = 'Cla
 $PwshExe = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe'; if (-not (Test-Path $PwshExe)) { $PwshExe = (Get-Process -Id $PID).Path }
 $RunCmd = 'wscript.exe "{0}"' -f (Join-Path $PSScriptRoot 'ClaudeUsageWidget.vbs')   # автозапуск через VBS-лаунчер (скрытая консоль)
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
-$mi = New-Object System.Windows.Forms.ToolStripMenuItem 'Обновить сейчас'; $mi.Add_Click({ Get-Usage; $form.Invalidate() }); $menu.Items.Add($mi) | Out-Null
-$mi = New-Object System.Windows.Forms.ToolStripMenuItem 'Открыть панель usage на claude.ai'; $mi.Add_Click({ Start-Process 'https://claude.ai/settings/usage' }); $menu.Items.Add($mi) | Out-Null
-$miAuto2 = New-Object System.Windows.Forms.ToolStripMenuItem 'На панели задач (авто-позиция)'; $miAuto2.CheckOnClick = $true; $miAuto2.Checked = [bool]$script:Cfg.auto
+$mi = New-Object System.Windows.Forms.ToolStripMenuItem (T 'Обновить сейчас' 'Refresh now'); $mi.Add_Click({ Get-Usage; $form.Invalidate() }); $menu.Items.Add($mi) | Out-Null
+$mi = New-Object System.Windows.Forms.ToolStripMenuItem (T 'Открыть панель usage на claude.ai' 'Open the usage page on claude.ai'); $mi.Add_Click({ Start-Process 'https://claude.ai/settings/usage' }); $menu.Items.Add($mi) | Out-Null
+$miAuto2 = New-Object System.Windows.Forms.ToolStripMenuItem (T 'На панели задач (авто-позиция)' 'On the taskbar (auto position)'); $miAuto2.CheckOnClick = $true; $miAuto2.Checked = [bool]$script:Cfg.auto
 $miAuto2.Add_Click({ $script:Cfg.auto = $this.Checked; Save-Cfg; Place-Window; $form.Invalidate() }); $menu.Items.Add($miAuto2) | Out-Null
-$miAlign = New-Object System.Windows.Forms.ToolStripMenuItem 'Текст по правому краю'; $miAlign.CheckOnClick = $true; $miAlign.Checked = ($script:Cfg.align -eq 'right')
+$miAlign = New-Object System.Windows.Forms.ToolStripMenuItem (T 'Текст по правому краю' 'Right-aligned text'); $miAlign.CheckOnClick = $true; $miAlign.Checked = ($script:Cfg.align -eq 'right')
 $miAlign.Add_Click({ $script:Cfg.align = if ($this.Checked) { 'right' } else { 'left' }; Save-Cfg; $form.Invalidate() }); $menu.Items.Add($miAlign) | Out-Null
-$miLogin = New-Object System.Windows.Forms.ToolStripMenuItem 'Войти в аккаунт Claude…'
+$miLogin = New-Object System.Windows.Forms.ToolStripMenuItem (T 'Войти в аккаунт Claude…' 'Sign in to Claude…')
 $miLogin.Add_Click({
     $exe = Join-Path $env:USERPROFILE '.local\bin\claude.exe'
     if (-not (Test-Path $exe)) { $c = Get-Command claude -ErrorAction SilentlyContinue; if ($c) { $exe = $c.Source } }
@@ -441,12 +445,12 @@ $miLogin.Add_Click({
 })
 $miLogin.Visible = -not $Url
 $menu.Items.Add($miLogin) | Out-Null
-$miAuto = New-Object System.Windows.Forms.ToolStripMenuItem 'Автозапуск'; $miAuto.CheckOnClick = $true
+$miAuto = New-Object System.Windows.Forms.ToolStripMenuItem (T 'Автозапуск' 'Start with Windows'); $miAuto.CheckOnClick = $true
 $miAuto.Checked = [bool](Get-ItemProperty -Path $RunKey -Name $RunName -ErrorAction SilentlyContinue)
 $miAuto.Add_Click({ if ($this.Checked) { Set-ItemProperty -Path $RunKey -Name $RunName -Value $RunCmd } else { Remove-ItemProperty -Path $RunKey -Name $RunName -ErrorAction SilentlyContinue } })
 $menu.Items.Add($miAuto) | Out-Null
 $menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator)) | Out-Null
-$mi = New-Object System.Windows.Forms.ToolStripMenuItem 'Выход'; $mi.Add_Click({ $form.Close() }); $menu.Items.Add($mi) | Out-Null
+$mi = New-Object System.Windows.Forms.ToolStripMenuItem (T 'Выход' 'Exit'); $mi.Add_Click({ $form.Close() }); $menu.Items.Add($mi) | Out-Null
 $form.ContextMenuStrip = $menu
 # сводка (та же, что в подсказке) — вверху меню, собирается заново при каждом открытии
 $script:InfoItems = @()
