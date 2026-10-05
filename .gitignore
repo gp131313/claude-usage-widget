@@ -6,3 +6,4 @@ windows/*.json
 windows/*.log
 windows/tmp/
 server/state.json
+windows/setup/out/

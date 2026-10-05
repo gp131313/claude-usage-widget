@@ -13,15 +13,18 @@
 
 ## Быстрая установка (Windows, для всех)
 
-1. Скачайте **`ClaudeUsageWidget-Setup-*.zip`** со страницы [Releases](https://github.com/gp131313/claude-usage-widget/releases/latest).
-2. Распакуйте архив (правый клик → «Извлечь всё») и дважды щёлкните **`Setup.cmd`**.
-3. Следуйте окнам: если Claude Code ещё не установлен, установщик предложит поставить его и войти в ваш аккаунт Claude (Pro/Max).
+1. Скачайте **[ClaudeUsageWidget-Setup.exe](https://github.com/gp131313/claude-usage-widget/releases/latest/download/ClaudeUsageWidget-Setup.exe)**.
+2. Запустите его двойным щелчком.
+
+Если на компьютере уже выполнен вход в Claude Code, вопросов не будет — только окно «Готово». Если нет,
+установщик предложит поставить Claude Code и войти в ваш аккаунт Claude (Pro/Max).
 
 Всё. Виджет появится на панели задач слева от значков у часов и будет запускаться сам. Сервер не нужен,
 права администратора не нужны. Удаление — меню «Пуск» → «Удалить Claude Usage Widget».
 
 Если Windows покажет «Система Windows защитила ваш компьютер» — «Подробнее» → «Выполнить в любом случае»
-(скрипты не подписаны). Антивирус может ругаться на `Add-Type` с вызовами WinAPI — это ложное срабатывание,
+(установщик не подписан). Не хотите запускать exe — в том же релизе есть `ClaudeUsageWidget-Setup-*.zip`:
+распакуйте и дважды щёлкните `Setup.cmd`, результат тот же. Антивирус может ругаться на `Add-Type` с вызовами WinAPI — это ложное срабатывание,
 папку `%LOCALAPPDATA%\ClaudeUsageWidget` можно добавить в исключения.
 
 ## Как это работает
@@ -120,12 +123,14 @@ server/
   watchdog.sh            запуск/перезапуск сервиса (для cron)
   install.sh             crontab @reboot + */5, запуск
 windows/
-  Setup.cmd              установщик «нажал и получил» (запускает install.ps1)
+  Setup.cmd              установщик из архива (запускает install.ps1)
   install.ps1            копирование в %LOCALAPPDATA%, Claude Code + вход, автозапуск, ярлыки
   uninstall.ps1          удаление (Claude Code не трогает)
   ClaudeUsageWidget.ps1  виджет на панели задач
   ClaudeUsageWidget.vbs  лаунчер со скрытой консолью
   ClaudeUsageTray.ps1    старый вариант: три значка в трее (5ч %, время сброса, неделя)
+  setup/Setup.cs         однофайловый установщик ClaudeUsageWidget-Setup.exe (те же файлы внутри exe)
+  setup/build.ps1        его сборка компилятором C# из состава Windows, без SDK
 ```
 
 ## Ограничения
@@ -148,8 +153,8 @@ windows/
 ## English
 
 Shows your real Claude (Pro/Max) quota usage right on the Windows taskbar, with a spend plan: 100% of the weekly
-limit by Friday evening, 100% of the 5-hour window by its reset. Download `ClaudeUsageWidget-Setup-*.zip` from
-Releases, unzip, double-click `Setup.cmd`. Works standalone (reads Claude Code's OAuth token, refreshes it) or as a
+limit by Friday evening, 100% of the 5-hour window by its reset. Download `ClaudeUsageWidget-Setup.exe` from
+Releases and run it. Works standalone (reads Claude Code's OAuth token, refreshes it) or as a
 client of the bundled Linux server. UI is in Russian.
 
 ## Лицензия
