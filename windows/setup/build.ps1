@@ -19,6 +19,9 @@ $res = foreach ($f in $Files) {
     '/resource:"{0}",{1}' -f $p, $f
 }
 & $csc /nologo /target:winexe /platform:anycpu /optimize+ /codepage:65001 `
-    /reference:System.Windows.Forms.dll "/out:$exe" @res (Join-Path $PSScriptRoot 'Setup.cs')
+    /reference:System.Windows.Forms.dll /reference:System.Drawing.dll "/out:$exe" @res (Join-Path $PSScriptRoot 'Setup.cs')
 if ($LASTEXITCODE -ne 0) { throw "csc failed ($LASTEXITCODE)" }
-'{0}  {1} bytes  sha256 {2}' -f $exe, (Get-Item $exe).Length, (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+# the silent installer is the same binary: it switches mode by its own file name
+$silent = Join-Path $out 'ClaudeUsageWidget-Setup-Silent.exe'
+Copy-Item $exe $silent -Force
+foreach ($f in $exe, $silent) { '{0}  {1} bytes  sha256 {2}' -f $f, (Get-Item $f).Length, (Get-FileHash $f -Algorithm SHA256).Hash.ToLower() }

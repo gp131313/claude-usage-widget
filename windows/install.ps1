@@ -2,12 +2,16 @@
 # Запускается из Setup.cmd. Что делает:
 #   1) копирует виджет в %LOCALAPPDATA%\ClaudeUsageWidget;
 #   2) если нет входа в Claude Code — предлагает поставить Claude Code (официальный установщик) и войти;
-#   3) включает автозапуск, создаёт ярлыки в меню «Пуск», запускает виджет.
+#   3) включает автозапуск, создаёт ярлыки в меню «Пуск», регистрирует виджет в «Приложениях», запускает его.
+# -Silent: без единого окна и без шага входа в Claude (ошибка — в %TEMP%\ClaudeUsageWidget-install.log).
+# -NoFinishBox: без итогового окна «Готово» (его показывает мастер установки). -NoAutostart: без автозапуска.
+param([switch]$Silent, [switch]$NoFinishBox, [switch]$NoAutostart)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 $Title = 'Claude Usage Widget'
-function Say([string]$m, [string]$icon = 'Information') { [void][System.Windows.Forms.MessageBox]::Show($m, $Title, 'OK', $icon) }
-function Ask([string]$m) { [System.Windows.Forms.MessageBox]::Show($m, $Title, 'YesNo', 'Question') -eq 'Yes' }
+$Version = '1.3.0'
+function Say([string]$m, [string]$icon = 'Information') { if ($Silent) { return }; [void][System.Windows.Forms.MessageBox]::Show($m, $Title, 'OK', $icon) }
+function Ask([string]$m) { if ($Silent) { return $false }; [System.Windows.Forms.MessageBox]::Show($m, $Title, 'YesNo', 'Question') -eq 'Yes' }
 
 try {
     $src = $PSScriptRoot
@@ -39,7 +43,7 @@ try {
         if ($c) { return $c.Source }
         return $null
     }
-    if (-not (Test-Path $cred)) {
+    if (-not $Silent -and -not (Test-Path $cred)) {
         $claude = Find-Claude
         if (-not $claude) {
             $ok = Ask ("Виджету нужен вход в ваш аккаунт Claude через программу Claude Code (официальная, от Anthropic).`n`n" +
@@ -69,7 +73,9 @@ try {
 
     # 4. автозапуск и ярлыки в меню «Пуск»
     $vbs = Join-Path $dst 'ClaudeUsageWidget.vbs'
-    Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'ClaudeUsageWidget' -Value ('wscript.exe "{0}"' -f $vbs)
+    $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+    if ($NoAutostart) { Remove-ItemProperty -Path $runKey -Name 'ClaudeUsageWidget' -ErrorAction SilentlyContinue }
+    else { Set-ItemProperty -Path $runKey -Name 'ClaudeUsageWidget' -Value ('wscript.exe "{0}"' -f $vbs) }
     $sh = New-Object -ComObject WScript.Shell
     $programs = [Environment]::GetFolderPath('Programs')
     $lnk = $sh.CreateShortcut((Join-Path $programs 'Claude Usage Widget.lnk'))
@@ -80,13 +86,29 @@ try {
     $lnk.Arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f (Join-Path $dst 'uninstall.ps1')
     $lnk.WorkingDirectory = $dst; $lnk.Save()
 
-    # 5. запуск
+    # 5. запись в «Параметры → Приложения» (удаление штатным способом)
+    $un = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f (Join-Path $dst 'uninstall.ps1')
+    $reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ClaudeUsageWidget'
+    New-Item -Path $reg -Force | Out-Null
+    Set-ItemProperty -Path $reg -Name DisplayName -Value $Title
+    Set-ItemProperty -Path $reg -Name DisplayVersion -Value $Version
+    Set-ItemProperty -Path $reg -Name Publisher -Value 'gp131313'
+    Set-ItemProperty -Path $reg -Name URLInfoAbout -Value 'https://github.com/gp131313/claude-usage-widget'
+    Set-ItemProperty -Path $reg -Name InstallLocation -Value $dst
+    Set-ItemProperty -Path $reg -Name UninstallString -Value $un
+    Set-ItemProperty -Path $reg -Name QuietUninstallString -Value ($un + ' -Silent')
+    Set-ItemProperty -Path $reg -Name NoModify -Value 1 -Type DWord
+    Set-ItemProperty -Path $reg -Name NoRepair -Value 1 -Type DWord
+    Set-ItemProperty -Path $reg -Name EstimatedSize -Value 64 -Type DWord   # КБ
+
+    # 6. запуск
     Start-Process wscript.exe -ArgumentList ('"{0}"' -f $vbs)
-    Say ("Готово!`n`nВиджет появится на панели задач — слева от значков у часов.`n`n" +
+    if (-not $NoFinishBox) { Say ("Готово!`n`nВиджет появится на панели задач — слева от значков у часов.`n`n" +
          "Правый клик по виджету — настройки (выравнивание, вход в аккаунт).`n" +
-         "Удалить: меню «Пуск» → «Удалить Claude Usage Widget».")
+         "Удалить: «Параметры» → «Приложения» или меню «Пуск» → «Удалить Claude Usage Widget».") }
 }
 catch {
+    if ($Silent) { try { Add-Content -Path (Join-Path $env:TEMP 'ClaudeUsageWidget-install.log') -Value ("{0:yyyy-MM-dd HH:mm:ss} {1}" -f (Get-Date), $_.Exception.Message) -Encoding UTF8 } catch {} }
     Say ("Установка не удалась:`n`n" + $_.Exception.Message) 'Error'
     exit 1
 }

@@ -1,21 +1,52 @@
-// Setup.cs — однофайловый установщик Claude Usage Widget (ClaudeUsageWidget-Setup.exe).
-// Внутри exe лежат те же файлы, что и в архиве с Setup.cmd: он распаковывает их во временную папку
-// и запускает install.ps1 без окна консоли. Прав администратора не требует. Сборка — build.ps1.
+// Setup.cs — однофайловый установщик Claude Usage Widget. Внутри exe лежат те же файлы, что и в архиве
+// с Setup.cmd: он распаковывает их во временную папку и запускает install.ps1 без окна консоли.
+// Прав администратора не требует. Сборка — build.ps1. Один исходник, два файла:
+//   ClaudeUsageWidget-Setup.exe         мастер «Далее → Установить → Готово»
+//   ClaudeUsageWidget-Setup-Silent.exe  без единого окна (то же даёт ключ /silent у первого)
 using System;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 [assembly: AssemblyTitle("Claude Usage Widget Setup")]
 [assembly: AssemblyProduct("Claude Usage Widget")]
-[assembly: AssemblyVersion("1.2.0.0")]
-[assembly: AssemblyFileVersion("1.2.0.0")]
+[assembly: AssemblyVersion("1.3.0.0")]
+[assembly: AssemblyFileVersion("1.3.0.0")]
 
-static class Setup
+public static class Setup
 {
+    public const string Title = "Claude Usage Widget";
+
+    [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+
     [STAThread]
-    static int Main()
+    static int Main(string[] args)
+    {
+        // тихий режим: по имени файла (…-Silent.exe) или по ключу /silent, /quiet, /s, /q
+        bool silent = Path.GetFileNameWithoutExtension(Application.ExecutablePath).IndexOf("silent", StringComparison.OrdinalIgnoreCase) >= 0;
+        foreach (string a in args)
+        {
+            string s = a.TrimStart('/', '-').ToLowerInvariant();
+            if (s == "silent" || s == "verysilent" || s == "quiet" || s == "s" || s == "q") silent = true;
+        }
+        if (silent)
+        {
+            try { return RunInstall("-Silent"); } catch { return 1; }
+        }
+        SetProcessDPIAware();
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        Wizard w = new Wizard();
+        Application.Run(w);
+        return w.ExitCode;
+    }
+
+    // распаковать вложенные файлы и выполнить install.ps1 с заданными ключами; возвращает его код выхода
+    public static int RunInstall(string psArgs)
     {
         string dir = Path.Combine(Path.GetTempPath(), "ClaudeUsageWidget-Setup-" + Guid.NewGuid().ToString("N").Substring(0, 8));
         try
@@ -28,25 +59,173 @@ static class Setup
                 using (FileStream dst = File.Create(Path.Combine(dir, name)))
                     src.CopyTo(dst);
             }
-
             string ps = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), @"System32\WindowsPowerShell\v1.0\powershell.exe");
-            ProcessStartInfo psi = new ProcessStartInfo(ps, "-NoProfile -ExecutionPolicy Bypass -File \"" + Path.Combine(dir, "install.ps1") + "\"");
+            ProcessStartInfo psi = new ProcessStartInfo(ps, "-NoProfile -ExecutionPolicy Bypass -File \"" + Path.Combine(dir, "install.ps1") + "\" " + psArgs);
             psi.UseShellExecute = false;
-            psi.CreateNoWindow = true;   // окна установщика — диалоги самого install.ps1
+            psi.CreateNoWindow = true;
             using (Process p = Process.Start(psi))
             {
                 p.WaitForExit();
                 return p.ExitCode;
             }
         }
-        catch (Exception ex)
-        {
-            MessageBox.Show("Установка не удалась:\n\n" + ex.Message, "Claude Usage Widget", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            return 1;
-        }
         finally
         {
             try { Directory.Delete(dir, true); } catch { }
         }
+    }
+}
+
+// Мастер: 0 приветствие → 1 параметры → 2 установка → 3 готово
+public class Wizard : Form
+{
+    public int ExitCode = 1;   // 1 — отменено или не удалось
+    int page;
+    string error;
+    Label head, sub, body;
+    Panel optPanel;
+    CheckBox autoBox;
+    ProgressBar bar;
+    Button back, next, cancel;
+    float scale = 1F;
+    int S(int v) { return (int)Math.Round(v * scale); }
+    Point P(int x, int y) { return new Point(S(x), S(y)); }
+    Size Z(int w, int h) { return new Size(S(w), S(h)); }
+
+    static string InstallDir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeUsageWidget"); } }
+
+    static bool LoggedIn
+    {
+        get
+        {
+            string cfg = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
+            if (string.IsNullOrEmpty(cfg)) cfg = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
+            return File.Exists(Path.Combine(cfg, ".credentials.json"));
+        }
+    }
+
+    public Wizard()
+    {
+        SuspendLayout();
+        AutoScaleMode = AutoScaleMode.None;   // масштабируем сами: координаты ниже — в логических px (96 dpi)
+        using (Graphics g = Graphics.FromHwnd(IntPtr.Zero)) scale = g.DpiX / 96F;
+        ClientSize = Z(500, 344);
+        Text = "Установка " + Setup.Title;
+        Font = new Font("Segoe UI", 9F);
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false; MinimizeBox = false;
+        StartPosition = FormStartPosition.CenterScreen;
+
+        Panel header = new Panel(); header.BackColor = Color.White; header.Location = P(0, 0); header.Size = Z(500, 66);
+        head = new Label(); head.Font = new Font("Segoe UI", 11F, FontStyle.Bold); head.Location = P(18, 12); head.Size = Z(464, 24);
+        sub = new Label(); sub.ForeColor = Color.FromArgb(90, 90, 90); sub.Location = P(18, 38); sub.Size = Z(464, 20);
+        header.Controls.Add(head); header.Controls.Add(sub);
+        Label line1 = new Label(); line1.BorderStyle = BorderStyle.Fixed3D; line1.Location = P(0, 66); line1.Size = Z(500, 2);
+
+        body = new Label(); body.Location = P(24, 86); body.Size = Z(452, 196);
+
+        optPanel = new Panel(); optPanel.Location = P(24, 86); optPanel.Size = Z(452, 196); optPanel.Visible = false;
+        Label pathLabel = new Label(); pathLabel.Text = "Папка установки:"; pathLabel.Location = P(0, 0); pathLabel.Size = Z(452, 20);
+        TextBox pathBox = new TextBox(); pathBox.ReadOnly = true; pathBox.Text = InstallDir; pathBox.Location = P(0, 22); pathBox.Size = Z(452, 23); pathBox.TabStop = false;
+        autoBox = new CheckBox(); autoBox.Text = "Запускать виджет при входе в Windows"; autoBox.Checked = true; autoBox.Location = P(0, 62); autoBox.Size = Z(452, 24);
+        Label note = new Label(); note.ForeColor = Color.FromArgb(90, 90, 90); note.Location = P(0, 100); note.Size = Z(452, 90);
+        note.Text = "Устанавливается только для вашей учётной записи, права администратора не нужны.\n\n"
+                  + "Удалить можно в любой момент: «Параметры» → «Приложения» → " + Setup.Title + ".";
+        optPanel.Controls.Add(pathLabel); optPanel.Controls.Add(pathBox); optPanel.Controls.Add(autoBox); optPanel.Controls.Add(note);
+
+        bar = new ProgressBar(); bar.Style = ProgressBarStyle.Marquee; bar.MarqueeAnimationSpeed = 30; bar.Location = P(24, 126); bar.Size = Z(452, 18); bar.Visible = false;
+
+        Label line2 = new Label(); line2.BorderStyle = BorderStyle.Fixed3D; line2.Location = P(0, 292); line2.Size = Z(500, 2);
+        back = new Button(); back.Text = "< Назад"; back.Location = P(206, 306); back.Size = Z(88, 26);
+        next = new Button(); next.Location = P(300, 306); next.Size = Z(88, 26);
+        cancel = new Button(); cancel.Text = "Отмена"; cancel.Location = P(400, 306); cancel.Size = Z(88, 26);
+        back.Click += delegate { ShowPage(0); };
+        next.Click += delegate { if (page == 0) ShowPage(1); else if (page == 1) StartInstall(); else Close(); };
+        cancel.Click += delegate { Close(); };
+        AcceptButton = next; CancelButton = cancel;
+
+        Controls.Add(bar); Controls.Add(optPanel); Controls.Add(body);
+        Controls.Add(header); Controls.Add(line1); Controls.Add(line2);
+        Controls.Add(back); Controls.Add(next); Controls.Add(cancel);
+        ResumeLayout(false);
+        PerformLayout();
+
+        FormClosing += delegate(object s, FormClosingEventArgs e) { if (page == 2) e.Cancel = true; };   // во время установки не закрываем
+        ShowPage(0);
+    }
+
+    public void ShowPage(int p)
+    {
+        page = p;
+        optPanel.Visible = (p == 1);
+        body.Visible = (p != 1);
+        bar.Visible = (p == 2);
+        back.Visible = (p < 2); back.Enabled = (p == 1);
+        next.Enabled = (p != 2);
+        cancel.Enabled = (p < 2);
+        switch (p)
+        {
+            case 0:
+                head.Text = "Установка " + Setup.Title;
+                sub.Text = "Расход квоты Claude — на панели задач Windows";
+                body.Text = "Виджет показывает прямо на панели задач, сколько квоты Claude (Pro/Max) осталось в 5-часовом окне "
+                          + "и на неделю, и какой темп расхода позволит дотянуть до конца недели.\n\n"
+                          + "Данные берутся из вашего входа в Claude Code. Если вход ещё не выполнен, установщик поможет это сделать.\n\n"
+                          + "Нажмите «Далее», чтобы продолжить.";
+                next.Text = "Далее >";
+                break;
+            case 1:
+                head.Text = "Параметры установки";
+                sub.Text = "Проверьте параметры и нажмите «Установить»";
+                next.Text = "Установить";
+                break;
+            case 2:
+                head.Text = "Установка";
+                sub.Text = "Подождите, это займёт несколько секунд";
+                body.Text = "Копирование файлов и настройка…";
+                break;
+            case 3:
+                head.Text = "Установка завершена";
+                sub.Text = Setup.Title + " установлен";
+                string auto = autoBox.Checked ? " и будет запускаться сам при входе в Windows" : "";
+                if (LoggedIn)
+                    body.Text = "Виджет уже на панели задач — слева от значков у часов" + auto + ".\n\n"
+                              + "Правый щелчок по виджету — настройки.\n\n"
+                              + "Удаление: «Параметры» → «Приложения» → " + Setup.Title + ".";
+                else
+                    body.Text = "Виджет уже на панели задач — слева от значков у часов" + auto + ".\n\n"
+                              + "Вход в Claude пока не выполнен, поэтому вместо цифр виджет показывает «Войдите в Claude». "
+                              + "Щёлкните по нему правой кнопкой и выберите «Войти в аккаунт Claude…».\n\n"
+                              + "Удаление: «Параметры» → «Приложения» → " + Setup.Title + ".";
+                next.Text = "Готово";
+                next.Focus();
+                break;
+        }
+    }
+
+    void StartInstall()
+    {
+        ShowPage(2);
+        string psArgs = "-NoFinishBox" + (autoBox.Checked ? "" : " -NoAutostart");
+        Task.Factory.StartNew<int>(delegate
+        {
+            try { return Setup.RunInstall(psArgs); }
+            catch (Exception ex) { error = ex.Message; return 1; }
+        }).ContinueWith(delegate(Task<int> t) { Done(t.Result); }, TaskScheduler.FromCurrentSynchronizationContext());
+    }
+
+    void Done(int code)
+    {
+        ExitCode = code;
+        page = 3;   // снять запрет на закрытие
+        if (code != 0)
+        {
+            // об ошибке внутри install.ps1 он уже сообщил сам; здесь — только сбой запуска
+            if (error != null) MessageBox.Show(this, "Установка не удалась:\n\n" + error, Setup.Title, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            Close();
+            return;
+        }
+        ShowPage(3);
+        Activate();
     }
 }

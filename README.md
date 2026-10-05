@@ -14,13 +14,17 @@
 ## Быстрая установка (Windows, для всех)
 
 1. Скачайте **[ClaudeUsageWidget-Setup.exe](https://github.com/gp131313/claude-usage-widget/releases/latest/download/ClaudeUsageWidget-Setup.exe)**.
-2. Запустите его двойным щелчком.
+2. Запустите его и пройдите мастер: «Далее» → «Установить» → «Готово».
 
-Если на компьютере уже выполнен вход в Claude Code, вопросов не будет — только окно «Готово». Если нет,
-установщик предложит поставить Claude Code и войти в ваш аккаунт Claude (Pro/Max).
+Если вход в Claude Code ещё не выполнен, установщик предложит поставить Claude Code и войти в ваш аккаунт
+Claude (Pro/Max).
+
+Есть и тихий вариант — **[ClaudeUsageWidget-Setup-Silent.exe](https://github.com/gp131313/claude-usage-widget/releases/latest/download/ClaudeUsageWidget-Setup-Silent.exe)**:
+запустил — и виджет появился, без единого окна (то же делает `ClaudeUsageWidget-Setup.exe /silent`). Шаг входа
+в Claude он пропускает: если входа нет, виджет покажет «Войдите в Claude» — правый щелчок → «Войти в аккаунт Claude…».
 
 Всё. Виджет появится на панели задач слева от значков у часов и будет запускаться сам. Сервер не нужен,
-права администратора не нужны. Удаление — меню «Пуск» → «Удалить Claude Usage Widget».
+права администратора не нужны. Удаление — «Параметры» → «Приложения» или меню «Пуск» → «Удалить Claude Usage Widget».
 
 Если Windows покажет «Система Windows защитила ваш компьютер» — «Подробнее» → «Выполнить в любом случае»
 (установщик не подписан). Не хотите запускать exe — в том же релизе есть `ClaudeUsageWidget-Setup-*.zip`:
@@ -129,7 +133,7 @@ windows/
   ClaudeUsageWidget.ps1  виджет на панели задач
   ClaudeUsageWidget.vbs  лаунчер со скрытой консолью
   ClaudeUsageTray.ps1    старый вариант: три значка в трее (5ч %, время сброса, неделя)
-  setup/Setup.cs         однофайловый установщик ClaudeUsageWidget-Setup.exe (те же файлы внутри exe)
+  setup/Setup.cs         установщик одним файлом: мастер и тихий вариант (те же файлы внутри exe)
   setup/build.ps1        его сборка компилятором C# из состава Windows, без SDK
 ```
 
@@ -154,7 +158,7 @@ windows/
 
 Shows your real Claude (Pro/Max) quota usage right on the Windows taskbar, with a spend plan: 100% of the weekly
 limit by Friday evening, 100% of the 5-hour window by its reset. Download `ClaudeUsageWidget-Setup.exe` from
-Releases and run it. Works standalone (reads Claude Code's OAuth token, refreshes it) or as a
+Releases and run it (`ClaudeUsageWidget-Setup-Silent.exe` installs with no UI). Works standalone (reads Claude Code's OAuth token, refreshes it) or as a
 client of the bundled Linux server. UI is in Russian.
 
 ## Лицензия
