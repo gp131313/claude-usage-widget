@@ -1,4 +1,6 @@
-# claude-usage-widget
+# Claude Usage Widget
+
+**Русский** | [English](README.en.md)
 
 Реальный расход квоты Claude (Max / Pro) — на панели задач Windows, с планом расходования.
 
@@ -6,15 +8,17 @@
 сколько можно тратить, чтобы выйти ровно в 100 % **к вечеру пятницы** (недельная квота) и **к концу
 5-часового окна**, — и показывает результат прямо на панели задач.
 
-```
-Осталось 63% до 16:10           ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬ (зелёная, тает слева направо)
-Осталось 40% до пятницы 22:00   ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬ (красная — расход опережает план)
-```
+![Виджет на панели задач Windows: остаток 5-часового окна и недельного лимита](docs/widget-taskbar.png)
+
+Верхняя строка — 5-часовое окно, нижняя — неделя. Полоска тает по мере расхода и меняет цвет: зелёная — по плану,
+жёлтая и красная — расход опережает план.
 
 ## Быстрая установка (Windows, для всех)
 
 1. Скачайте **[ClaudeUsageWidget-Setup.exe](https://github.com/gp131313/claude-usage-widget/releases/latest/download/ClaudeUsageWidget-Setup.exe)**.
 2. Запустите его и пройдите мастер: «Далее» → «Установить» → «Готово».
+
+<p><img src="docs/setup-wizard.png" width="420" alt="Мастер установки: приветствие"> <img src="docs/setup-options.png" width="420" alt="Мастер установки: параметры"></p>
 
 Если вход в Claude Code ещё не выполнен, установщик предложит поставить Claude Code и войти в ваш аккаунт
 Claude (Pro/Max).
@@ -135,6 +139,7 @@ windows/
   ClaudeUsageTray.ps1    старый вариант: три значка в трее (5ч %, время сброса, неделя)
   setup/Setup.cs         установщик одним файлом: мастер и тихий вариант (те же файлы внутри exe)
   setup/build.ps1        его сборка компилятором C# из состава Windows, без SDK
+docs/                    скриншоты для README
 ```
 
 ## Ограничения
@@ -153,13 +158,6 @@ windows/
 Если виджет оказался полезен — можно кинуть на кофе:
 
 - **Dogecoin**: `D7z9UaBsmcV7EqJo5Y5fdLG9xUNw47dNgr`
-
-## English
-
-Shows your real Claude (Pro/Max) quota usage right on the Windows taskbar, with a spend plan: 100% of the weekly
-limit by Friday evening, 100% of the 5-hour window by its reset. Download `ClaudeUsageWidget-Setup.exe` from
-Releases and run it (`ClaudeUsageWidget-Setup-Silent.exe` installs with no UI). Works standalone (reads Claude Code's OAuth token, refreshes it) or as a
-client of the bundled Linux server. UI is in Russian.
 
 ## Лицензия
 
