@@ -414,11 +414,12 @@ $form.Add_Paint({
         $g.FillRectangle($bb, $bx, $by, $bw, $BarH); $bb.Dispose()
         $fillW = [int]([math]::Max(0, [math]::Min(100, $r.remaining)) / 100 * $bw)
         $mc = $c
-        if ($r.fable) { $mc = [System.Drawing.Color]::FromArgb([int]($c.R * 0.45), [int]($c.G * 0.45), [int]($c.B * 0.45)) }   # общий бар затемняем, чтобы читалась полоска Fable поверх
+        if ($r.fable) { $mc = [System.Drawing.Color]::FromArgb([int]($c.R * 0.65), [int]($c.G * 0.65), [int]($c.B * 0.65)) }   # общий бар слегка приглушаем, чтобы читалась светлая полоска Fable поверх
         $fb = New-Object System.Drawing.SolidBrush $mc
         if ($fillW -gt 0) { $g.FillRectangle($fb, ($bx + $bw - $fillW), $by, $fillW, $BarH) }; $fb.Dispose()
-        if ($r.fable) {   # поверх — остаток Fable: яркая полоска вдвое тоньше по нижнему краю, цвет его плана
+        if ($r.fable) {   # поверх — остаток Fable: светлая полоска вдвое тоньше по нижнему краю, цвет его плана, высветлен к белому
             $fc = $Colors[$r.fable.color]; if (-not $fc) { $fc = $Colors.gray }
+            $fc = [System.Drawing.Color]::FromArgb([int]($fc.R + (255 - $fc.R) * 0.45), [int]($fc.G + (255 - $fc.G) * 0.45), [int]($fc.B + (255 - $fc.B) * 0.45))
             $fh = [int][math]::Ceiling($BarH / 2); $fw = [int]([math]::Max(0, [math]::Min(100, $r.fable.remaining)) / 100 * $bw)
             $fb = New-Object System.Drawing.SolidBrush $fc
             if ($fw -gt 0) { $g.FillRectangle($fb, ($bx + $bw - $fw), ($by + $BarH - $fh), $fw, $fh) }; $fb.Dispose()
