@@ -1,5 +1,5 @@
 ﻿# ClaudeUsageWidget.ps1 — виджет расхода квоты Claude прямо на панели задач Windows.
-# Две строки: 5-часовое окно и неделя, убывающие прогресс-бары. Недельный бар (все модели) затемнён, поверх него яркая полоска — остаток отдельного лимита Fable.
+# Две строки: 5-часовое окно и неделя, убывающие прогресс-бары. Поверх недельного бара (все модели) светлой полоской — остаток отдельного лимита Fable.
 # Источник данных: автономно (API Anthropic + токен Claude Code) или сервер claude-usage (ключ url).
 # Хост — PowerShell 7 (лаунчер .vbs находит pwsh сам); без него работает и в Windows PowerShell 5.1. Настройки — ClaudeUsageWidget.json рядом.
 
@@ -413,16 +413,14 @@ $form.Add_Paint({
         $bb = New-Object System.Drawing.SolidBrush $BarBack
         $g.FillRectangle($bb, $bx, $by, $bw, $BarH); $bb.Dispose()
         $fillW = [int]([math]::Max(0, [math]::Min(100, $r.remaining)) / 100 * $bw)
-        $mc = $c
-        if ($r.fable) { $mc = [System.Drawing.Color]::FromArgb([int]($c.R * 0.65), [int]($c.G * 0.65), [int]($c.B * 0.65)) }   # общий бар слегка приглушаем, чтобы читалась светлая полоска Fable поверх
-        $fb = New-Object System.Drawing.SolidBrush $mc
+        $fb = New-Object System.Drawing.SolidBrush $c
         if ($fillW -gt 0) { $g.FillRectangle($fb, ($bx + $bw - $fillW), $by, $fillW, $BarH) }; $fb.Dispose()
-        if ($r.fable) {   # поверх — остаток Fable: светлая полоска вдвое тоньше по нижнему краю, цвет его плана, высветлен к белому
+        if ($r.fable) {   # поверх — остаток Fable: полоска той же высоты, цвет его плана, высветлен к белому
             $fc = $Colors[$r.fable.color]; if (-not $fc) { $fc = $Colors.gray }
-            $fc = [System.Drawing.Color]::FromArgb([int]($fc.R + (255 - $fc.R) * 0.45), [int]($fc.G + (255 - $fc.G) * 0.45), [int]($fc.B + (255 - $fc.B) * 0.45))
-            $fh = [int][math]::Ceiling($BarH / 2); $fw = [int]([math]::Max(0, [math]::Min(100, $r.fable.remaining)) / 100 * $bw)
+            $fc = [System.Drawing.Color]::FromArgb([int]($fc.R + (255 - $fc.R) * 0.55), [int]($fc.G + (255 - $fc.G) * 0.55), [int]($fc.B + (255 - $fc.B) * 0.55))
+            $fw = [int]([math]::Max(0, [math]::Min(100, $r.fable.remaining)) / 100 * $bw)
             $fb = New-Object System.Drawing.SolidBrush $fc
-            if ($fw -gt 0) { $g.FillRectangle($fb, ($bx + $bw - $fw), ($by + $BarH - $fh), $fw, $fh) }; $fb.Dispose()
+            if ($fw -gt 0) { $g.FillRectangle($fb, ($bx + $bw - $fw), $by, $fw, $BarH) }; $fb.Dispose()
         }
         $y += $RowH
     }
