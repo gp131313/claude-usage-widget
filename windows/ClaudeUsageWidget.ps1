@@ -422,6 +422,9 @@ $form.Add_Paint({
             $fw = [int]([math]::Max(0, [math]::Min(100, $r.fable.remaining)) / 100 * $bw)
             $fb = New-Object System.Drawing.SolidBrush $fc
             if ($fw -gt 0) { $g.FillRectangle($fb, ($bx + $bw - $fw), $by, $fw, $BarH) }; $fb.Dispose()
+            # маркер начала полоски Fable: белая вертикальная чёрточка, выступающая над баром и под ним
+            $mk = New-Object System.Drawing.SolidBrush $TextColor; $mw3 = [math]::Max(1, (L 1.5)); $me = L 1
+            $g.FillRectangle($mk, ($bx + $bw - $fw - [int]($mw3 / 2)), ($by - $me), $mw3, ($BarH + $me * 2)); $mk.Dispose()
         }
         $y += $RowH
     }
