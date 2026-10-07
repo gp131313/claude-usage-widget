@@ -1,5 +1,5 @@
 ﻿# ClaudeUsageWidget.ps1 — виджет расхода квоты Claude прямо на панели задач Windows.
-# Две строки: 5-часовое окно и неделя, убывающие прогресс-бары. На недельный бар (все модели) поверх наложена тёмная полоска — остаток отдельного лимита Fable.
+# Две строки: 5-часовое окно и неделя, убывающие прогресс-бары. Недельный бар (все модели) затемнён, поверх него яркая полоска — остаток отдельного лимита Fable.
 # Источник данных: автономно (API Anthropic + токен Claude Code) или сервер claude-usage (ключ url).
 # Хост — PowerShell 7 (лаунчер .vbs находит pwsh сам); без него работает и в Windows PowerShell 5.1. Настройки — ClaudeUsageWidget.json рядом.
 
@@ -243,9 +243,9 @@ function Build-Rows {
     if ($f) {
         $reset = ToLocal $f.plan_end
         $rows += @{ color = $(if ($d.stale) { 'gray' } else { [string]$d.color_weekly }); remaining = [double]$f.remaining_pct
-                    main = (T 'Осталось {0}% до {1} {2}' '{0}% left until {1} {2}') -f (Fmt $f.remaining_pct), (Day-Genitive $reset), $reset.ToString('HH:mm')
+                    main = (T '{0}%{3} до {1} {2}' '{0}%{3} until {1} {2}') -f (Fmt $f.remaining_pct), (Day-Genitive $reset), $reset.ToString('HH:mm'), $(if ($d.fable -and $null -ne $d.fable.remaining_pct) { ' ({0}% Fable)' -f (Fmt $d.fable.remaining_pct) } else { '' })
                     sub = $(if ($null -ne $f.needed_per_day_pp) { (T 'Неделя · {0}% в день' 'Week · {0}%/day') -f (Pace $f.needed_per_day_pp) } else { (T 'Неделя' 'Week') }) }
-        $fb = $d.fable                               # наложенная полоска — отдельный лимит Fable (цвет по его же плану, затемнён)
+        $fb = $d.fable                               # наложенная полоска — отдельный лимит Fable (цвет по его же плану)
         if ($fb -and $null -ne $fb.remaining_pct) {
             $rows[-1].fable = @{ remaining = [double]$fb.remaining_pct; color = $(if ($d.stale) { 'gray' } else { Color-Weekly $fb $null }) }
         }
@@ -413,11 +413,12 @@ $form.Add_Paint({
         $bb = New-Object System.Drawing.SolidBrush $BarBack
         $g.FillRectangle($bb, $bx, $by, $bw, $BarH); $bb.Dispose()
         $fillW = [int]([math]::Max(0, [math]::Min(100, $r.remaining)) / 100 * $bw)
-        $fb = New-Object System.Drawing.SolidBrush $c
+        $mc = $c
+        if ($r.fable) { $mc = [System.Drawing.Color]::FromArgb([int]($c.R * 0.45), [int]($c.G * 0.45), [int]($c.B * 0.45)) }   # общий бар затемняем, чтобы читалась полоска Fable поверх
+        $fb = New-Object System.Drawing.SolidBrush $mc
         if ($fillW -gt 0) { $g.FillRectangle($fb, ($bx + $bw - $fillW), $by, $fillW, $BarH) }; $fb.Dispose()
-        if ($r.fable) {   # поверх — остаток Fable: полоска вдвое тоньше по нижнему краю, цвет его плана, затемнённый
+        if ($r.fable) {   # поверх — остаток Fable: яркая полоска вдвое тоньше по нижнему краю, цвет его плана
             $fc = $Colors[$r.fable.color]; if (-not $fc) { $fc = $Colors.gray }
-            $fc = [System.Drawing.Color]::FromArgb([int]($fc.R * 0.45), [int]($fc.G * 0.45), [int]($fc.B * 0.45))
             $fh = [int][math]::Ceiling($BarH / 2); $fw = [int]([math]::Max(0, [math]::Min(100, $r.fable.remaining)) / 100 * $bw)
             $fb = New-Object System.Drawing.SolidBrush $fc
             if ($fw -gt 0) { $g.FillRectangle($fb, ($bx + $bw - $fw), ($by + $BarH - $fh), $fw, $fh) }; $fb.Dispose()
