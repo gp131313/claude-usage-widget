@@ -10,7 +10,7 @@ param([switch]$Silent, [switch]$NoFinishBox, [switch]$NoAutostart, [string]$Dir)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 $Title = 'Claude Usage Widget'
-$Version = '1.4.0'
+$Version = '1.5.0'
 # язык окон — по языку Windows: русский или английский
 $Ru = ([Globalization.CultureInfo]::CurrentUICulture.TwoLetterISOLanguageName -eq 'ru')
 function T([string]$ru, [string]$en) { if ($Ru) { $ru } else { $en } }
