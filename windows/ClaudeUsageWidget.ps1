@@ -315,14 +315,14 @@ Add-Type -Name Tb -Namespace Win32 -MemberDefinition @'
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
 '@ -ReferencedAssemblies $(if ($PSVersionTable.PSEdition -eq 'Core') { 'System.Drawing.Primitives' } else { 'System.Drawing' })
 function Test-RdpFullscreen {
-    # активное окно — клиент RDP (mstsc/msrdc), развёрнутый на весь монитор: локальной панели задач не видно
+    # активное окно — клиент RDP (mstsc/msrdc) или SmartPSS, развёрнутое на весь монитор: локальной панели задач не видно
     $h = [Win32.Tb]::GetForegroundWindow(); if ($h -eq [IntPtr]::Zero) { return $false }
     $root = [Win32.Tb]::GetAncestor($h, 2); if ($root -eq [IntPtr]::Zero) { $root = $h }
     $procId = [uint32]0; [Win32.Tb]::GetWindowThreadProcessId($root, [ref]$procId) | Out-Null
     if ($procId -ne $script:FgPid) {   # имя процесса кэшируем до смены активного окна
         $script:FgPid = $procId
         $p = Get-Process -Id $procId -ErrorAction SilentlyContinue
-        $script:FgIsRdp = [bool]($p -and $p.ProcessName -match '^(mstsc|msrdc)$')
+        $script:FgIsRdp = [bool]($p -and $p.ProcessName -match '^(mstsc|msrdc|SmartPSS.*)$')
     }
     if (-not $script:FgIsRdp) { return $false }
     $r = New-Object Win32.Tb+RECT; [Win32.Tb]::GetWindowRect($root, [ref]$r) | Out-Null
@@ -330,7 +330,7 @@ function Test-RdpFullscreen {
     return ($r.L -le $b.Left -and $r.T -le $b.Top -and $r.R -ge $b.Right -and $r.B -ge $b.Bottom)
 }
 function Ensure-OnTop {
-    # на полноэкранной RDP-сессии виджет прячем (иначе он висит поверх удалённого рабочего стола)
+    # на полноэкранной RDP-сессии или в полноэкранном SmartPSS виджет прячем (иначе он висит поверх)
     $rdp = Test-RdpFullscreen
     if ($rdp -ne [bool]$script:RdpHidden) {
         $script:RdpHidden = $rdp
