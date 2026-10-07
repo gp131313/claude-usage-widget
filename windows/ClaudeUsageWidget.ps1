@@ -303,6 +303,7 @@ $FontMain = New-Object System.Drawing.Font -ArgumentList 'Segoe UI', ([single]8)
 $FontSub  = New-Object System.Drawing.Font -ArgumentList 'Segoe UI', ([single]6.5)
 $SF = New-Object System.Drawing.StringFormat ([System.Drawing.StringFormat]::GenericTypographic)
 $SF.FormatFlags = $SF.FormatFlags -bor [System.Drawing.StringFormatFlags]::NoWrap
+function Lighten($c, [double]$k) { [System.Drawing.Color]::FromArgb([int]($c.R + (255 - $c.R) * $k), [int]($c.G + (255 - $c.G) * $k), [int]($c.B + (255 - $c.B) * $k)) }   # к белому на долю k
 function Draw-Text($g, [string]$t, $font, $color, [int]$x, [int]$y) { $b = New-Object System.Drawing.SolidBrush $color; $g.DrawString($t, $font, $b, [single]$x, [single]$y, $SF); $b.Dispose() }
 function Text-W($g, [string]$t, $font) { [int][math]::Ceiling($g.MeasureString($t, $font, 10000, $SF).Width) }
 
@@ -413,11 +414,13 @@ $form.Add_Paint({
         $bb = New-Object System.Drawing.SolidBrush $BarBack
         $g.FillRectangle($bb, $bx, $by, $bw, $BarH); $bb.Dispose()
         $fillW = [int]([math]::Max(0, [math]::Min(100, $r.remaining)) / 100 * $bw)
-        $fb = New-Object System.Drawing.SolidBrush $c
+        $mc = $c
+        if ($r.fable) { $mc = Lighten $c 0.5 }   # недельный бар с наложением Fable — на 50 % светлее
+        $fb = New-Object System.Drawing.SolidBrush $mc
         if ($fillW -gt 0) { $g.FillRectangle($fb, ($bx + $bw - $fillW), $by, $fillW, $BarH) }; $fb.Dispose()
-        if ($r.fable) {   # поверх — остаток Fable: полоска той же высоты, цвет его плана, высветлен к белому
+        if ($r.fable) {   # поверх — остаток Fable: полоска той же высоты, цвет его плана, высветлен к белому сильнее общего
             $fc = $Colors[$r.fable.color]; if (-not $fc) { $fc = $Colors.gray }
-            $fc = [System.Drawing.Color]::FromArgb([int]($fc.R + (255 - $fc.R) * 0.55), [int]($fc.G + (255 - $fc.G) * 0.55), [int]($fc.B + (255 - $fc.B) * 0.55))
+            $fc = Lighten $fc 0.8
             $fw = [int]([math]::Max(0, [math]::Min(100, $r.fable.remaining)) / 100 * $bw)
             $fb = New-Object System.Drawing.SolidBrush $fc
             if ($fw -gt 0) { $g.FillRectangle($fb, ($bx + $bw - $fw), $by, $fw, $BarH) }; $fb.Dispose()
