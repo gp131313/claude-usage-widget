@@ -1,5 +1,5 @@
 ﻿# ClaudeUsageWidget.ps1 — виджет расхода квоты Claude прямо на панели задач Windows.
-# Две строки: 5-часовое окно и неделя, убывающие прогресс-бары.
+# Две строки: 5-часовое окно и неделя, убывающие прогресс-бары. Недельный бар составной: широкая часть — все модели, узкая справа — отдельный лимит Fable.
 # Источник данных: автономно (API Anthropic + токен Claude Code) или сервер claude-usage (ключ url).
 # Хост — PowerShell 7 (лаунчер .vbs находит pwsh сам); без него работает и в Windows PowerShell 5.1. Настройки — ClaudeUsageWidget.json рядом.
 
@@ -182,7 +182,7 @@ function Convert-Raw($raw, [datetime]$now) {
     if (-not $sess -and $raw.five_hour) { $sess = @{ percent = $raw.five_hour.utilization; resets_at = $raw.five_hour.resets_at } }
     if (-not $week -and $raw.seven_day) { $week = @{ percent = $raw.seven_day.utilization; resets_at = $raw.seven_day.resets_at } }
     $w = Plan-Weekly $week $now
-    $f = Plan-Weekly $fab $now                       # отдельный лимит Fable считаем, но не показываем
+    $f = Plan-Weekly $fab $now                       # отдельный лимит Fable — узкая часть недельного бара и строка в сводке
     $s = Plan-Session $sess $now
     if ($w) {   # «потрачено сегодня»: снимок недельного расхода на начало суток хранится в конфиге
         $u = [double]$w.used_pct; $loc = Get-Date; $today = $loc.ToString('yyyy-MM-dd')
@@ -227,7 +227,7 @@ function Get-Usage {
     } else { $script:Data = $null }
 }
 
-# строки для отрисовки: @{ color; remaining; main; sub }
+# строки для отрисовки: @{ color; remaining; main; sub; [fable = @{ color; remaining }] } — fable задаёт узкую часть составного бара
 function Build-Rows {
     $d = $script:Data
     if ($null -eq $d) { return @(@{ color = 'gray'; remaining = 0; main = $(if ($script:ErrShort) { $script:ErrShort } else { (T 'Нет данных' 'No data') }); sub = '' }) }
@@ -245,6 +245,10 @@ function Build-Rows {
         $rows += @{ color = $(if ($d.stale) { 'gray' } else { [string]$d.color_weekly }); remaining = [double]$f.remaining_pct
                     main = (T 'Осталось {0}% до {1} {2}' '{0}% left until {1} {2}') -f (Fmt $f.remaining_pct), (Day-Genitive $reset), $reset.ToString('HH:mm')
                     sub = $(if ($null -ne $f.needed_per_day_pp) { (T 'Неделя · {0}% в день' 'Week · {0}%/day') -f (Pace $f.needed_per_day_pp) } else { (T 'Неделя' 'Week') }) }
+        $fb = $d.fable                               # узкая часть бара — отдельный лимит Fable (цвет по его же плану)
+        if ($fb -and $null -ne $fb.remaining_pct) {
+            $rows[-1].fable = @{ remaining = [double]$fb.remaining_pct; color = $(if ($d.stale) { 'gray' } else { Color-Weekly $fb $null }) }
+        }
     }
     if ($d.stale) { $rows[0].sub = (T 'ДАННЫЕ УСТАРЕЛИ ({0} мин)' 'STALE DATA ({0} min)') -f [math]::Round($d.data_age_sec / 60) }
     return $rows
@@ -405,12 +409,23 @@ $form.Add_Paint({
             Draw-Text $g $r.sub $FontSub $DimColor $sx ($y + [int](($lineH - $FontSub.GetHeight($g)) / 2))
         }
         $bx = $textX; $by = $y + $lineH + (L 1); $bw = $form.Width - $Pad * 2
-        $bb = New-Object System.Drawing.SolidBrush $BarBack
-        $g.FillRectangle($bb, $bx, $by, $bw, $BarH); $bb.Dispose()
         if ($y -eq $Pad) { $script:Probe = New-Object System.Drawing.Point -ArgumentList ($bx + (L 2)), ($by + [int]($BarH / 2)) }
-        $fillW = [int]([math]::Max(0, [math]::Min(100, $r.remaining)) / 100 * $bw)
-        $fb = New-Object System.Drawing.SolidBrush $c
-        if ($fillW -gt 0) { $g.FillRectangle($fb, ($bx + $bw - $fillW), $by, $fillW, $BarH) }; $fb.Dispose()
+        # сегменты бара: @(x, ширина, остаток, цвет); составной — широкий (все модели) + узкий справа (Fable) через зазор
+        $segs = @()
+        if ($r.fable) {
+            $gap = L 2; $fw = [int]($bw * 0.25); $mw2 = $bw - $fw - $gap
+            $fc = $Colors[$r.fable.color]; if (-not $fc) { $fc = $Colors.gray }
+            $segs += ,@($bx, $mw2, $r.remaining, $c)
+            $segs += ,@(($bx + $mw2 + $gap), $fw, $r.fable.remaining, $fc)
+        } else { $segs += ,@($bx, $bw, $r.remaining, $c) }
+        foreach ($sg in $segs) {
+            $sx = [int]$sg[0]; $sw2 = [int]$sg[1]
+            $bb = New-Object System.Drawing.SolidBrush $BarBack
+            $g.FillRectangle($bb, $sx, $by, $sw2, $BarH); $bb.Dispose()
+            $fillW = [int]([math]::Max(0, [math]::Min(100, [double]$sg[2])) / 100 * $sw2)
+            $fb = New-Object System.Drawing.SolidBrush $sg[3]
+            if ($fillW -gt 0) { $g.FillRectangle($fb, ($sx + $sw2 - $fillW), $by, $fillW, $BarH) }; $fb.Dispose()
+        }
         $y += $RowH
     }
 })

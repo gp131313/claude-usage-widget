@@ -13,7 +13,8 @@ how much you can spend to land at exactly 100% **by Friday evening** (weekly lim
 ![The widget on the Windows taskbar: what is left of the 5-hour window and of the weekly limit](docs/widget-taskbar-en.png)
 
 The top row is the 5-hour window, the bottom row is the week. The bar shrinks as you spend and changes colour:
-green — on plan, yellow and red — spending is ahead of plan.
+green — on plan, yellow and red — spending is ahead of plan. The weekly bar is split: the wide part is the overall
+limit for all models, the narrow part on the right is the separate weekly Fable limit (if your plan has one).
 
 The widget and the installer are in English or Russian, picked by the Windows display language.
 
