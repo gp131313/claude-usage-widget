@@ -133,8 +133,8 @@ terminal, ignores that flag and shows a console window; it does respect the hidd
 - **Z-order**: the taskbar is topmost too and floats above the widget after each of its own updates. A watchdog
   checks `WindowFromPoint` on an opaque pixel of the widget once a second and brings the window back on top when
   needed. While Start or the notification centre is open, the widget stays under the taskbar — on purpose.
-- **Full-screen RDP / SmartPSS**: while the active window is an RDP client (`mstsc`/`msrdc`) or Dahua SmartPSS covering the whole monitor, the
-  widget hides so that it does not hang over the remote desktop or video wall; it comes back by itself.
+- **Full-screen windows**: while the active window (RDP client, SmartPSS, video, game) covers the widget's whole monitor, the
+  widget hides so that it does not hang over it; it comes back by itself. The desktop and maximized windows do not count as full-screen.
 - **Antivirus**: `Add-Type` with P/Invoke (`ShowWindow`, `SetWindowPos`, `FindWindow`) is a classic false
   positive for heuristics. The widget moves `TEMP` to a `tmp` subfolder next to the script; it is worth adding
   the script folder to the exclusions.
