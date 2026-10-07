@@ -414,9 +414,7 @@ $form.Add_Paint({
         $bb = New-Object System.Drawing.SolidBrush $BarBack
         $g.FillRectangle($bb, $bx, $by, $bw, $BarH); $bb.Dispose()
         $fillW = [int]([math]::Max(0, [math]::Min(100, $r.remaining)) / 100 * $bw)
-        $mc = $c
-        if ($r.fable) { $mc = Lighten $c 0.5 }   # недельный бар с наложением Fable — на 50 % светлее
-        $fb = New-Object System.Drawing.SolidBrush $mc
+        $fb = New-Object System.Drawing.SolidBrush $c
         if ($fillW -gt 0) { $g.FillRectangle($fb, ($bx + $bw - $fillW), $by, $fillW, $BarH) }; $fb.Dispose()
         if ($r.fable) {   # поверх — остаток Fable: полоска той же высоты, цвет его плана, высветлен к белому сильнее общего
             $fc = $Colors[$r.fable.color]; if (-not $fc) { $fc = $Colors.gray }
