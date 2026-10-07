@@ -100,7 +100,7 @@ Claude Code stays idle for long, the server gets a 401, the JSON gets `stale: tr
 The server **deliberately does not refresh the token itself**, so as not to break the Claude Code session (the
 refresh token rotates).
 
-### Widget by hand (Windows 10/11, PowerShell 5.1 or 7)
+### Widget by hand (Windows 10/11, PowerShell 7; falls back to Windows PowerShell 5.1)
 
 1. Copy `windows/ClaudeUsageWidget.ps1` and `windows/ClaudeUsageWidget.vbs` into one folder.
 2. First run: `wscript.exe ClaudeUsageWidget.vbs`. With no settings it runs standalone (requires a Claude Code
@@ -108,7 +108,8 @@ refresh token rotates).
    `"url": "http://<host>:8766/usage.json"` in it and restart.
 3. Right-click the widget → the autostart item.
 
-It starts through `.vbs` rather than `pwsh -WindowStyle Hidden`: Windows Terminal, when it is the default
+The `.vbs` launcher finds PowerShell 7 itself (`pwsh.exe` in Program Files, the Store alias or PATH) and uses
+Windows PowerShell 5.1 only when it is absent. It starts through `.vbs` rather than `pwsh -WindowStyle Hidden`: Windows Terminal, when it is the default
 terminal, ignores that flag and shows a console window; it does respect the hidden-window flag passed through
 `WScript.Shell.Run(..., 0)`.
 

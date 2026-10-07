@@ -1,7 +1,7 @@
 ﻿# ClaudeUsageWidget.ps1 — виджет расхода квоты Claude прямо на панели задач Windows.
 # Две строки: 5-часовое окно и неделя, убывающие прогресс-бары.
 # Источник данных: автономно (API Anthropic + токен Claude Code) или сервер claude-usage (ключ url).
-# Работает в Windows PowerShell 5.1 и PowerShell 7. Настройки — ClaudeUsageWidget.json рядом.
+# Хост — PowerShell 7 (лаунчер .vbs находит pwsh сам); без него работает и в Windows PowerShell 5.1. Настройки — ClaudeUsageWidget.json рядом.
 
 param(
     [string]$Url = '',   # если пусто — берётся из ClaudeUsageWidget.json (ключ url)

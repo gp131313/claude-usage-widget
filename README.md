@@ -96,7 +96,7 @@ Root не нужен. Порт 8766 должен быть доступен с Wi
 долго простаивает — сервер получит 401, в JSON появится `stale: true`, виджет станет серым. Сервер
 **намеренно не делает refresh сам**, чтобы не сломать сессию Claude Code (refresh-токен ротируется).
 
-### Виджет вручную (Windows 10/11, PowerShell 5.1 или 7)
+### Виджет вручную (Windows 10/11, PowerShell 7; без него — Windows PowerShell 5.1)
 
 1. Скопировать `windows/ClaudeUsageWidget.ps1` и `windows/ClaudeUsageWidget.vbs` в одну папку.
 2. Первый запуск: `wscript.exe ClaudeUsageWidget.vbs`. Без настроек работает автономно (нужен вход в Claude Code).
@@ -104,7 +104,8 @@ Root не нужен. Порт 8766 должен быть доступен с Wi
    `"url": "http://<host>:8766/usage.json"` и перезапустить.
 3. Правой кнопкой по виджету -> **Автозапуск**.
 
-Запуск через `.vbs`, а не `pwsh -WindowStyle Hidden`: Windows Terminal, если он терминал по умолчанию,
+Лаунчер `.vbs` сам находит PowerShell 7 (`pwsh.exe` в Program Files, алиас Store-версии или PATH) и лишь при его
+отсутствии берёт Windows PowerShell 5.1. Запуск через `.vbs`, а не `pwsh -WindowStyle Hidden`: Windows Terminal, если он терминал по умолчанию,
 этот флаг игнорирует и показывает окно консоли; флаг скрытого окна через `WScript.Shell.Run(..., 0)` он уважает.
 
 ### Меню виджета (правая кнопка)

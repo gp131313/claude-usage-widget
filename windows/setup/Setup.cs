@@ -51,6 +51,18 @@ public static class Setup
 
     public static string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeUsageWidget");
 
+    // хост для install.ps1: PowerShell 7 (Program Files, алиас Store-версии, PATH); если нет — Windows PowerShell 5.1
+    static string FindPwsh()
+    {
+        string[] cands = {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"PowerShell\7\pwsh.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Microsoft\WindowsApps\pwsh.exe") };
+        foreach (string c in cands) if (File.Exists(c)) return c;
+        foreach (string d in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'))
+            if (d.Length > 0 && File.Exists(Path.Combine(d, "pwsh.exe"))) return Path.Combine(d, "pwsh.exe");
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), @"System32\WindowsPowerShell\v1.0\powershell.exe");
+    }
+
     // распаковать вложенные файлы и выполнить install.ps1 с заданными ключами; возвращает его код выхода.
     // Распаковка — сразу в папку установки: запуск скриптов из %TEMP% антивирусы блокируют.
     public static int RunInstall(string psArgs)
@@ -67,7 +79,7 @@ public static class Setup
                 using (FileStream dst = File.Create(Path.Combine(dir, name)))
                     src.CopyTo(dst);
             }
-            string ps = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), @"System32\WindowsPowerShell\v1.0\powershell.exe");
+            string ps = FindPwsh();
             ProcessStartInfo psi = new ProcessStartInfo(ps, "-NoProfile -ExecutionPolicy Bypass -File \"" + Path.Combine(dir, "install.ps1") + "\" " + psArgs);
             psi.UseShellExecute = false;
             psi.CreateNoWindow = true;

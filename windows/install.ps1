@@ -14,6 +14,13 @@ $Version = '1.4.0'
 # язык окон — по языку Windows: русский или английский
 $Ru = ([Globalization.CultureInfo]::CurrentUICulture.TwoLetterISOLanguageName -eq 'ru')
 function T([string]$ru, [string]$en) { if ($Ru) { $ru } else { $en } }
+# хост для ярлыков и деинсталлятора: PowerShell 7, если установлен; иначе Windows PowerShell 5.1
+function Find-Pwsh {
+    foreach ($p in (Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe'), (Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe')) { if (Test-Path $p) { return $p } }
+    $c = Get-Command pwsh.exe -ErrorAction SilentlyContinue; if ($c) { return $c.Source }
+    return 'powershell.exe'
+}
+$PsExe = Find-Pwsh
 function Say([string]$m, [string]$icon = 'Information') { if ($Silent) { return }; [void][System.Windows.Forms.MessageBox]::Show($m, $Title, 'OK', $icon) }
 function Ask([string]$m) { if ($Silent) { return $false }; [System.Windows.Forms.MessageBox]::Show($m, $Title, 'YesNo', 'Question') -eq 'Yes' }
 
@@ -60,7 +67,7 @@ try {
                     # Claude Code под Windows использует Git for Windows
                     Start-Process winget -ArgumentList 'install', '--id', 'Git.Git', '-e', '--source', 'winget', '--silent', '--accept-package-agreements', '--accept-source-agreements' -Wait
                 }
-                Start-Process powershell.exe -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', 'irm https://claude.ai/install.ps1 | iex' -Wait
+                Start-Process $PsExe -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', 'irm https://claude.ai/install.ps1 | iex' -Wait
                 $claude = Find-Claude
                 if (-not $claude) { Say (T 'Не удалось установить Claude Code. Виджет будет установлен, но покажет «Войдите в Claude», пока вы не войдёте (правый клик по виджету → «Войти в аккаунт Claude…»).' 'Claude Code could not be installed. The widget will be installed, but it will show "Sign in to Claude" until you sign in (right-click the widget → "Sign in to Claude…").') 'Warning' }
             }
@@ -94,12 +101,12 @@ try {
     $lnk.Description = (T 'Расход квоты Claude на панели задач' 'Claude usage on the taskbar'); $lnk.Save()
     Remove-Item (Join-Path $programs 'Удалить Claude Usage Widget.lnk'), (Join-Path $programs 'Uninstall Claude Usage Widget.lnk') -Force -ErrorAction SilentlyContinue   # ярлык на другом языке от прошлой установки
     $lnk = $sh.CreateShortcut((Join-Path $programs (T 'Удалить Claude Usage Widget.lnk' 'Uninstall Claude Usage Widget.lnk')))
-    $lnk.TargetPath = 'powershell.exe'
+    $lnk.TargetPath = $PsExe
     $lnk.Arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f (Join-Path $dst 'uninstall.ps1')
     $lnk.WorkingDirectory = $dst; $lnk.Save()
 
     # 5. запись в «Параметры → Приложения» (удаление штатным способом)
-    $un = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f (Join-Path $dst 'uninstall.ps1')
+    $un = '"{0}" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{1}"' -f $PsExe, (Join-Path $dst 'uninstall.ps1')
     $reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ClaudeUsageWidget'
     New-Item -Path $reg -Force | Out-Null
     Set-ItemProperty -Path $reg -Name DisplayName -Value $Title
