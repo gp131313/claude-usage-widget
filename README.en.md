@@ -119,7 +119,7 @@ terminal, ignores that flag and shows a console window; it does respect the hidd
 
 - **On the taskbar (auto position)**: places itself left of the tray, height = taskbar height. Dragging it with
   the mouse turns auto mode off.
-- **Right-aligned text**.
+- **Right-aligned text** (on by default; uncheck it to align the text to the left).
 - **Summary** (at the top of the menu and in the hover tooltip): the 5-hour window, the week and the separate
   Fable limit; for the weekly limits — an even pace for the rest of the week (% per day, rounded to 10%).
 - **Sign in to Claude…** (standalone mode): opens Claude Code to sign in.

@@ -28,7 +28,7 @@ $CfgPath = Join-Path $PSScriptRoot 'ClaudeUsageWidget.json'
 $LogPath = Join-Path $PSScriptRoot 'ClaudeUsageWidget.log'
 function Log([string]$m) { try { Add-Content -Path $LogPath -Value ("{0:yyyy-MM-dd HH:mm:ss} {1}" -f (Get-Date), $m) -Encoding utf8 } catch {} }
 
-$script:Cfg = @{ x = -1; y = -1; auto = $true; align = 'left'; url = ''
+$script:Cfg = @{ x = -1; y = -1; auto = $true; align = 'right'; url = ''
                  poll_sec = 300; plan_end_offset_hours = 9; day_end_hour = 22; yellow_over_pp = 4; red_over_pp = 10
                  session_window_hours = 5; session_yellow_pct = 80; session_red_pct = 95; session_yellow_over_pp = 10; session_red_over_pp = 25 }   # align: left|right — выравнивание текста   # auto — сам встаёт на панель задач левее трея
 if (Test-Path $CfgPath) { try { (Get-Content $CfgPath -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $script:Cfg[$_.Name] = $_.Value } } catch {} }
