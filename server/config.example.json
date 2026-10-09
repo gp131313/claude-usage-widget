@@ -11,5 +11,7 @@
   "stale_after_sec": 1800,
   "session_window_hours": 5,
   "session_yellow_over_pp": 10,
-  "session_red_over_pp": 25
+  "session_red_over_pp": 25,
+  "auto_refresh": true,
+  "max_backoff_sec": 1800
 }

@@ -60,14 +60,65 @@ function Day-Genitive([datetime]$dt) {
     @{ Monday = 'понедельника'; Tuesday = 'вторника'; Wednesday = 'среды'; Thursday = 'четверга'; Friday = 'пятницы'; Saturday = 'субботы'; Sunday = 'воскресенья' }[[string]$dt.DayOfWeek]
 }
 function ToLocal($ra) { if ($ra -is [datetime]) { $ra.ToLocalTime() } else { ([datetimeoffset]::Parse([string]$ra)).LocalDateTime } }
+# возраст данных словами: «42 мин», «1 ч 05 мин», «2 дн»; -Short — от 10 ч без минут, чтобы на панели рядом влезла причина
+function Age-Text([double]$sec, [switch]$Short) {
+    $m = [int][math]::Floor([math]::Max(0, $sec) / 60)
+    if ($m -lt 60) { return (T '{0} мин' '{0} min') -f $m }
+    if ($Short -and $m -ge 600 -and $m -lt 1440) { return (T '{0} ч' '{0} h') -f [int][math]::Floor($m / 60) }
+    if ($m -lt 1440) { return (T '{0} ч {1:D2} мин' '{0} h {1:D2} min') -f [int][math]::Floor($m / 60), ($m % 60) }
+    return (T '{0} дн' '{0} d') -f [int][math]::Floor($m / 1440)
+}
+# HTTP-код ответа из ошибки Invoke-RestMethod (PowerShell 7 и 5.1); 0 — ответа не было (сеть, таймаут) или ошибка не HTTP
+function Http-Code($er) { $c = 0; try { $c = [int]$er.Exception.Response.StatusCode } catch {}; return $c }
+# тело ответа с ошибкой одной строкой: в отличие от текста исключения оно не переводится на язык Windows
+function Err-Body($er) {
+    $t = [string]$er.ErrorDetails.Message; if (-not $t) { $t = [string]$er.Exception.Message }
+    $t = ($t -replace '\s+', ' ').Trim(); if ($t.Length -gt 300) { $t = $t.Substring(0, 300) }
+    return $t
+}
+# ошибка сети без ответа сервера (имя не найдено, соединение, таймаут) — по типу исключения, текст его переведён
+function Is-NetErr($er) {
+    $er.Exception.GetType().FullName -in @('System.Net.WebException', 'System.Net.Http.HttpRequestException', 'System.Threading.Tasks.TaskCanceledException', 'System.TimeoutException', 'System.Net.Sockets.SocketException')
+}
+# ошибка одной строкой для подсказки: «HTTP 429: Rate limited…» из ответа сервера/API, иначе первая строка текста исключения
+function Short-Err([string]$e) {
+    if (-not $e) { return '' }
+    $s = ($e -split "`r?`n")[0].Trim()
+    $msg = $null   # текст из JSON ответа: «message» (API Anthropic), иначе «error_description» / «error» (OAuth, RFC 6749)
+    if ($e -match '"message"\s*:\s*"([^"]+)"') { $msg = $Matches[1] }
+    elseif ($e -match '"error_description"\s*:\s*"([^"]+)"') { $msg = $Matches[1]; if ($e -match '"error"\s*:\s*"([^"]+)"') { $msg = "$($Matches[1]): $msg" } }
+    elseif ($e -match '"error"\s*:\s*"([^"]+)"') { $msg = $Matches[1] }
+    if ($msg) { $head = ($e -split '\{', 2)[0].Trim().TrimEnd(':').Trim(); $s = if ($head) { "${head}: $msg" } else { $msg } }
+    if ($s.Length -gt 100) { $s = $s.Substring(0, 97) + '...' }
+    return $s
+}
+# HTTP-код из текста ошибки: «HTTP 429: …» и «token refresh HTTP 429: …» — так пишут ошибки и сервер, и виджет
+function Err-Code([string]$e) { if ($e -match 'HTTP ([45]\d\d)\b') { return $Matches[1] }; return '' }
+# причина устаревания коротко — для подписи у первой строки
+function Stale-Reason {
+    if ($script:Err -eq 'nocreds') { return (T 'нужен вход' 'sign in') }
+    # виджет не достучался до Anthropic / до сервера usage (ошибка без HTTP-ответа)
+    if ($script:Err -and ($script:ErrNet -or ($Url -and -not (Err-Code $script:Err)))) { return (T 'нет связи' 'offline') }
+    $e = if ($script:Err) { [string]$script:Err } else { [string]$script:Data.error }
+    if (-not $e) { return '' }
+    $c = Err-Code $e
+    if ($c) { if ($e -match '^\s*token refresh') { return (T 'токен: {0}' 'token: {0}') -f $c }; return (T 'ошибка {0}' 'error {0}') -f $c }
+    if ($e -match 'TokenExpired') { return (T 'токен истёк' 'token expired') }
+    if ($e -match 'no refreshToken') { return (T 'нужен вход' 'sign in') }
+    if ($e -match 'URLError|TimeoutError|timed out|Connection\w*Error|RemoteDisconnected') { return (T 'нет связи' 'offline') }   # сеть у сервера
+    return (T 'ошибка' 'error')
+}
 
 # ---------- источник данных ----------
 # url пустой  -> автономный режим: виджет сам ходит в API Anthropic с токеном Claude Code
 #                (%USERPROFILE%\.claude\.credentials.json) и сам считает план
 # url задан   -> клиент сервера claude-usage (готовый usage.json)
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-$script:Data = $null; $script:Err = $null; $script:ErrShort = $null
+$script:Data = $null; $script:Err = $null; $script:ErrShort = $null; $script:ErrNet = $false; $script:SrvAge = $null; $script:Fails = 0
 $script:Raw = $null; $script:RawAt = [datetime]::MinValue; $script:NextFetch = [datetime]::MinValue
+# продлённые токены, которые не удалось записать в файл: старый refresh-токен уже потрачен, действительны только они
+$script:Pending = $null; $script:PendingSpent = $null
+$script:Minted401 = $null   # токен, полученный продлением после 401: если API отвечает 401 и ему, продлевать снова бесполезно
 $OAuthClientId = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'          # client_id Claude Code
 $TokenUrl      = 'https://platform.claude.com/v1/oauth/token'
 $UsageApi      = 'https://api.anthropic.com/api/oauth/usage'
@@ -79,38 +130,97 @@ function Get-CredPath {
 function Read-Creds {
     $p = Get-CredPath
     if (-not (Test-Path $p)) { throw (New-Object System.IO.FileNotFoundException 'nocreds') }
-    $j = Get-Content $p -Raw | ConvertFrom-Json
+    $j = [IO.File]::ReadAllText($p) | ConvertFrom-Json   # UTF-8 без BOM (Get-Content в Windows PowerShell прочёл бы как ANSI)
     if (-not $j.claudeAiOauth) { throw (New-Object System.IO.FileNotFoundException 'nocreds') }
     return $j
 }
-function Update-Token {
-    # продлить access-токен по refresh-токену и записать обратно в файл Claude Code (формат сохраняется)
+function Write-Creds($n) {
+    # записать продлённые токены в файл Claude Code: он перечитывается прямо перед записью (Claude Code мог поменять
+    # в нём другое), заменяются только три поля; без BOM — Claude Code читает его JSON.parse
     $p = Get-CredPath
-    $j = Read-Creds; $o = $j.claudeAiOauth
-    $body = @{ grant_type = 'refresh_token'; refresh_token = [string]$o.refreshToken; client_id = $OAuthClientId; scope = (@($o.scopes) -join ' ') } | ConvertTo-Json
-    $r = Invoke-RestMethod -Uri $TokenUrl -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 20
-    if (-not $r.access_token) { throw (T 'refresh: пустой ответ' 'refresh: empty response') }
-    $o.accessToken = [string]$r.access_token
-    if ($r.refresh_token) { $o.refreshToken = [string]$r.refresh_token }
-    $o.expiresAt = [long]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + [long]$r.expires_in * 1000)
-    $json = $j | ConvertTo-Json -Depth 10 -Compress
+    $j = [IO.File]::ReadAllText($p) | ConvertFrom-Json   # UTF-8: Get-Content в Windows PowerShell испортил бы не-ASCII в других полях
+    foreach ($k in 'accessToken', 'refreshToken', 'expiresAt') { $j.claudeAiOauth | Add-Member -NotePropertyName $k -NotePropertyValue $n.$k -Force }
     $tmp = "$p.tmp"
-    [IO.File]::WriteAllText($tmp, $json, (New-Object System.Text.UTF8Encoding $false))   # без BOM — Claude Code читает JSON.parse
-    [IO.File]::Replace($tmp, $p, $null)
-    Log "token refreshed, expires in $($r.expires_in)s"
+    try {
+        [IO.File]::WriteAllText($tmp, ($j | ConvertTo-Json -Depth 10 -Compress), (New-Object System.Text.UTF8Encoding $false))
+        [IO.File]::Replace($tmp, $p, [NullString]::Value)   # без резервной копии; $null PowerShell передал бы как '' — и Replace упал бы
+    } catch { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue; throw }   # не оставлять файл с токенами
+}
+function Get-OAuth {
+    # текущие токены: незаписанное продление (заодно попытка записать его снова), иначе файл Claude Code
+    if ($script:Pending) {
+        $cur = $null; try { $cur = (Read-Creds).claudeAiOauth } catch {}
+        if ($cur -and $cur.refreshToken -and [string]$cur.refreshToken -notin @([string]$script:PendingSpent, [string]$script:Pending.refreshToken)) {
+            Log 'credentials file has new tokens; dropping the unsaved refreshed ones'   # например, вход в Claude Code заново
+            $script:Pending = $null; $script:PendingSpent = $null
+        } else {
+            try { Write-Creds $script:Pending; $script:Pending = $null; $script:PendingSpent = $null; Log 'refreshed tokens written' }
+            catch { Log "credentials still not written: $_"; return $script:Pending }
+        }
+    }
+    return (Read-Creds).claudeAiOauth
+}
+function Update-Token([string]$Rejected) {
+    # продлить access-токен по refresh-токену и записать обратно в файл Claude Code. Только истёкший токен или тот,
+    # на который API ответил 401 ($Rejected): токены перечитываются прямо перед запросом — вдруг Claude Code уже продлил сам
+    $o = Get-OAuth
+    if ([string]$o.accessToken -ne $Rejected -and [long]$o.expiresAt -ge ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + 60000)) { return }
+    $spent = [string]$o.refreshToken
+    if (-not $spent) { throw (New-Object System.IO.FileNotFoundException 'nocreds') }
+    # можно ли записать файл, проверяем до траты refresh-токена (как сервер): нельзя — продление пропускаем
+    $p = Get-CredPath; $tmp = "$p.tmp"
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue   # остаток прерванной записи (мог остаться и read-only)
+    try {
+        if ((Test-Path -LiteralPath $p) -and (Get-Item -LiteralPath $p -Force).IsReadOnly) { throw 'the file is read-only' }
+        [IO.File]::WriteAllText($tmp, (' ' * 8192), (New-Object System.Text.UTF8Encoding $false))
+    } catch {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        throw ('token refresh skipped: cannot write next to {0}: {1}' -f $p, $_.Exception.Message)
+    }
+    $body = @{ grant_type = 'refresh_token'; refresh_token = $spent; client_id = $OAuthClientId; scope = (@($o.scopes) -join ' ') } | ConvertTo-Json
+    try { $r = Invoke-RestMethod -Uri $TokenUrl -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 20 }
+    catch {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        $c = Http-Code $_; if ($c) { throw ('token refresh HTTP {0}: {1}' -f $c, (Err-Body $_)) }; throw
+    }
+    if (-not $r.access_token) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue; throw 'token refresh: no access_token in the response' }
+    $n = $o.PSObject.Copy()   # Add-Member -Force: поля может и не быть — исключение здесь потеряло бы уже выданные токены
+    $n | Add-Member -NotePropertyName accessToken -NotePropertyValue ([string]$r.access_token) -Force
+    if ($r.refresh_token) { $n | Add-Member -NotePropertyName refreshToken -NotePropertyValue ([string]$r.refresh_token) -Force }
+    $sec = [long]3600; try { if ($r.expires_in) { $sec = [math]::Min([math]::Max([long]$r.expires_in, 60), 30 * 86400) } } catch {}
+    $n | Add-Member -NotePropertyName expiresAt -NotePropertyValue ([long]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + $sec * 1000)) -Force
+    try { Write-Creds $n; $script:Pending = $null; $script:PendingSpent = $null }
+    catch {   # старый refresh-токен уже потрачен: новые держим в памяти и пишем в файл при следующих опросах
+        if (-not $script:PendingSpent) { $script:PendingSpent = $spent }
+        $script:Pending = $n; Log "token refreshed but credentials not written: $_; keeping the new tokens in memory"
+    }
+    Log "token refreshed, expires in $($sec)s"
 }
 function Invoke-UsageApi([string]$token) {
     Invoke-RestMethod -Uri $UsageApi -TimeoutSec 20 -Headers @{ Authorization = "Bearer $token"; 'anthropic-beta' = 'oauth-2025-04-20'; 'User-Agent' = 'claude-code/2.1.282' }
 }
 function Fetch-Raw {
     if ($script:Cfg.raw_url) { return Invoke-RestMethod -Uri ([string]$script:Cfg.raw_url) -TimeoutSec 8 }   # отладка: сырой ответ с сервера
-    $o = (Read-Creds).claudeAiOauth
-    if ([long]$o.expiresAt -lt ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + 60000)) { Update-Token; $o = (Read-Creds).claudeAiOauth }
-    try { return Invoke-UsageApi ([string]$o.accessToken) }
+    $o = Get-OAuth; $fresh = $false
+    if ([long]$o.expiresAt -lt ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + 60000)) { Update-Token; $o = Get-OAuth; $fresh = $true }
+    $tok = [string]$o.accessToken
+    try {
+        $res = Invoke-UsageApi $tok
+        if ($tok -eq $script:Minted401) { $script:Minted401 = $null }   # заработал: если его потом отзовут, одно продление снова допустимо
+        return $res
+    }
     catch {
-        $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch {}
-        if ($code -eq 401) { Update-Token; return Invoke-UsageApi ([string](Read-Creds).claudeAiOauth.accessToken) }
-        throw
+        # 401 на токен, живой по часам (отозван или продлён другим процессом): продлить — но не больше раза на токен;
+        # если 401 получает и продлённый, ждём с паузой, как после любого отказа
+        if ((Http-Code $_) -ne 401 -or $fresh -or $tok -eq $script:Minted401) { throw }
+        try { Update-Token $tok }
+        catch [System.IO.FileNotFoundException] { throw }
+        catch {   # продление не прошло без HTTP-кода (сеть): API этот токен всё равно отверг — это отказ, пауза растёт
+            if (Err-Code ([string]$_.Exception.Message)) { throw }
+            throw ('token refresh failed after usage HTTP 401: {0}' -f $_.Exception.Message)
+        }
+        $script:Minted401 = [string](Get-OAuth).accessToken
+        return Invoke-UsageApi $script:Minted401
     }
 }
 
@@ -200,23 +310,47 @@ function Convert-Raw($raw, [datetime]$now) {
 
 function Get-Usage {
     if ($Url) {   # режим клиента сервера
-        try { $script:Data = Invoke-RestMethod -Uri $Url -TimeoutSec 8; $script:Err = $null; $script:ErrShort = $null }
-        catch { $script:Err = $_.Exception.Message; $script:ErrShort = (T 'Нет связи с сервером usage' 'Usage server unreachable'); Log "fetch error: $($script:Err)" }
+        try {
+            $script:Data = Invoke-RestMethod -Uri $Url -TimeoutSec 8; $script:Err = $null; $script:ErrShort = $null; $script:ErrNet = $false
+            $script:RawAt = [datetime]::UtcNow; $script:SrvAge = $script:Data.data_age_sec
+        }
+        catch {
+            $c = Http-Code $_; $script:ErrNet = -not $c
+            if ($c) {   # сервер ответил ошибкой — он доступен: показываем его текст ошибки, а не «нет связи»
+                $m = $null; try { $m = [string](($_.ErrorDetails.Message | ConvertFrom-Json).error) } catch {}
+                if (-not $m) { $m = Err-Body $_ }
+                $script:Err = 'HTTP {0}: {1}' -f $c, $m; $script:ErrShort = (T 'Ошибка сервера usage' 'Usage server error')
+            } else { $script:Err = $_.Exception.Message; $script:ErrShort = (T 'Нет связи с сервером usage' 'Usage server unreachable') }
+            Log "fetch error: $($script:Err)"
+        }
+        # сервер не отвечает — данные стареют и здесь: возраст на сервере плюс время с его последнего ответа
+        # (пока сервер отвечает, его оценке stale верим: порог у него свой — stale_after_sec)
+        if ($script:Err -and $script:Data -and $null -ne $script:SrvAge) {
+            $age = [double]$script:SrvAge + ([datetime]::UtcNow - $script:RawAt).TotalSeconds
+            $script:Data | Add-Member -NotePropertyName data_age_sec -NotePropertyValue ([int]$age) -Force
+            if ($age -gt 1800) { $script:Data | Add-Member -NotePropertyName stale -NotePropertyValue $true -Force }
+        }
         return
     }
     $now = [datetime]::UtcNow
     if ($now -ge $script:NextFetch) {
         try {
-            $script:Raw = Fetch-Raw; $script:RawAt = $now; $script:Err = $null; $script:ErrShort = $null
+            $script:Raw = Fetch-Raw; $script:RawAt = $now; $script:Err = $null; $script:ErrShort = $null; $script:ErrNet = $false; $script:Fails = 0
             $script:NextFetch = $now.AddSeconds([double]$script:Cfg.poll_sec)
         }
         catch [System.IO.FileNotFoundException] {
-            $script:Err = 'nocreds'; $script:ErrShort = (T 'Войдите в Claude (правый клик)' 'Sign in to Claude (right-click)')
+            $script:Err = 'nocreds'; $script:ErrNet = $false; $script:ErrShort = (T 'Войдите в Claude (правый клик)' 'Sign in to Claude (right-click)')
             $script:NextFetch = $now.AddSeconds(30)
         }
         catch {
-            $script:Err = $_.Exception.Message; $script:ErrShort = (T 'Ошибка запроса к Anthropic' 'Anthropic request failed'); Log "fetch error: $($script:Err)"
-            $script:NextFetch = $now.AddSeconds(120)
+            # текст ошибки — «HTTP 429: <тело ответа>», как у сервера: сообщение исключения переведено на язык Windows
+            $c = Http-Code $_; $script:ErrNet = (-not $c) -and (Is-NetErr $_)
+            $script:Err = if ($c) { 'HTTP {0}: {1}' -f $c, (Err-Body $_) } else { $_.Exception.Message }
+            # отказ API (в том числе продления токена) — пауза 2, 4, 8… мин, не больше 30: на частые запросы с мёртвым
+            # токеном Anthropic отвечает 429; сеть недоступна — обычные 2 мин
+            if ($c -or (Err-Code $script:Err)) { $script:Fails++; $delay = [math]::Min(120 * [math]::Pow(2, $script:Fails - 1), 1800) } else { $delay = 120 }
+            $script:ErrShort = (T 'Ошибка запроса к Anthropic' 'Anthropic request failed'); Log "fetch error: $($script:Err); next try in $($delay)s"
+            $script:NextFetch = $now.AddSeconds($delay)
         }
     }
     if ($script:Raw) {
@@ -227,13 +361,17 @@ function Get-Usage {
     } else { $script:Data = $null }
 }
 
-# строки для отрисовки: @{ color; remaining; main; sub; [fable = @{ color; remaining }] } — fable рисуется тонкой полоской поверх бара
+# строки для отрисовки: @{ color; remaining; main; sub; [dim]; [fable = @{ color; remaining }] } — fable рисуется тонкой полоской поверх бара,
+# dim — текст приглушённым цветом (данные устарели)
 function Build-Rows {
     $d = $script:Data
     if ($null -eq $d) { return @(@{ color = 'gray'; remaining = 0; main = $(if ($script:ErrShort) { $script:ErrShort } else { (T 'Нет данных' 'No data') }); sub = '' }) }
     $rows = @()
     $s = $d.session
-    if ($s -and $s.active) {
+    if ($d.stale) {   # данные устарели: первая строка — на сколько и почему; цифры окна не показываем (оно могло смениться)
+        $rows += @{ color = 'gray'; remaining = 0; dim = $true; sub = (Stale-Reason)
+                    main = $(if ($null -ne $d.data_age_sec) { (T 'Устарели на {0}' 'Stale for {0}') -f (Age-Text $d.data_age_sec -Short) } else { (T 'Нет данных' 'No data') }) }
+    } elseif ($s -and $s.active) {
         $rows += @{ color = $(if ($d.stale) { 'gray' } else { [string]$d.color_session }); remaining = [double]$s.remaining_pct
                     main = (T 'Осталось {0}% до {1}' '{0}% left until {1}') -f (Fmt $s.remaining_pct), (ToLocal $s.resets_at).ToString('HH:mm'); sub = (T '5-часовое окно' '5-hour window') }
     } else {
@@ -242,7 +380,7 @@ function Build-Rows {
     $f = $d.weekly                                   # вторая строка — общий недельный лимит (все модели)
     if ($f) {
         $reset = ToLocal $f.plan_end
-        $rows += @{ color = $(if ($d.stale) { 'gray' } else { [string]$d.color_weekly }); remaining = [double]$f.remaining_pct
+        $rows += @{ color = $(if ($d.stale) { 'gray' } else { [string]$d.color_weekly }); remaining = [double]$f.remaining_pct; dim = [bool]$d.stale
                     main = (T '{0}%{3} до {1} {2}' '{0}%{3} until {1} {2}') -f (Fmt $f.remaining_pct), (Day-Genitive $reset), $reset.ToString('HH:mm'), $(if ($d.fable -and $null -ne $d.fable.remaining_pct) { ' ({0}% Fable)' -f (Fmt $d.fable.remaining_pct) } else { '' })
                     sub = $(if ($null -ne $f.needed_per_day_pp) { (T 'Неделя · {0}% в день' 'Week · {0}%/day') -f (Pace $f.needed_per_day_pp) } else { (T 'Неделя' 'Week') }) }
         $fb = $d.fable                               # наложенная полоска — отдельный лимит Fable (цвет по его же плану)
@@ -250,23 +388,42 @@ function Build-Rows {
             $rows[-1].fable = @{ remaining = [double]$fb.remaining_pct; color = $(if ($d.stale) { 'gray' } else { Color-Weekly $fb $null }) }
         }
     }
-    if ($d.stale) { $rows[0].sub = (T 'ДАННЫЕ УСТАРЕЛИ ({0} мин)' 'STALE DATA ({0} min)') -f [math]::Round($d.data_age_sec / 60) }
     return $rows
 }
 
 # всплывающая подсказка: подробности по окну, неделе и отдельному лимиту Fable
+# почему нет свежих данных — одной читаемой строкой (подсказка для входа, ошибка без JSON и внутренних меток)
+function Err-Why {
+    if ($script:Err -eq 'nocreds') { return $script:ErrShort }
+    if ($Url -and $script:Err) { return $script:ErrShort + ': ' + (Short-Err $script:Err) }   # «Нет связи с сервером usage» / «Ошибка сервера usage»
+    if ($script:Err) { return (Short-Err $script:Err) }
+    if ($script:Data -and $script:Data.error) { return (Short-Err ([string]$script:Data.error)) }
+    return ''
+}
 function Build-Tip {
     $d = $script:Data
-    if ($null -eq $d) { return $(if ($script:Err) { ((T 'Нет данных' 'No data') + ": $($script:Err)") } else { (T 'Нет данных' 'No data') }) }
+    if ($null -eq $d) {
+        if ($script:Err -eq 'nocreds') { return $script:ErrShort }
+        $why = Err-Why; return $(if ($why) { (T 'Нет данных' 'No data') + ': ' + $why } else { (T 'Нет данных' 'No data') })
+    }
     $L = New-Object System.Collections.Generic.List[string]
 
     $s = $d.session
-    $L.Add((T '5-часовое окно' '5-hour window'))
-    if ($s -and $s.active -and $s.resets_at) {
-        $r = ToLocal $s.resets_at
-        $m = [int][math]::Max(0, ($r - (Get-Date)).TotalMinutes)
-        $L.Add(((T '  Осталось {0}% · сброс в {1} (через {2} ч {3:D2} мин)' '  {0}% left · resets at {1} (in {2} h {3:D2} min)') -f (Fmt $s.remaining_pct), $r.ToString('HH:mm'), [math]::Floor($m / 60), ($m % 60)))
-    } else { $L.Add((T '  Окно не начато — доступно 100%' '  Window not started — 100% available')) }
+    if ($d.stale) {   # вместо окна (его цифры уже неверны) — когда были последние данные и что мешает их обновить
+        $L.Add((T 'Данные устарели' 'Stale data'))
+        if ($null -ne $d.data_age_sec) {
+            $L.Add(((T '  Последнее обновление в {0} ({1} назад)' '  Last update at {0} ({1} ago)') -f (Get-Date).AddSeconds(-[double]$d.data_age_sec).ToString('HH:mm'), (Age-Text $d.data_age_sec)))
+        }
+        $why = Err-Why
+        if ($why) { $L.Add('  ' + $why) }
+    } else {
+        $L.Add((T '5-часовое окно' '5-hour window'))
+        if ($s -and $s.active -and $s.resets_at) {
+            $r = ToLocal $s.resets_at
+            $m = [int][math]::Max(0, ($r - (Get-Date)).TotalMinutes)
+            $L.Add(((T '  Осталось {0}% · сброс в {1} (через {2} ч {3:D2} мин)' '  {0}% left · resets at {1} (in {2} h {3:D2} min)') -f (Fmt $s.remaining_pct), $r.ToString('HH:mm'), [math]::Floor($m / 60), ($m % 60)))
+        } else { $L.Add((T '  Окно не начато — доступно 100%' '  Window not started — 100% available')) }
+    }
 
     foreach ($row in @(@((T 'Неделя (все модели)' 'Week (all models)'), $d.weekly, $true), @((T 'Fable (отдельный лимит)' 'Fable (separate limit)'), $d.fable, $false))) {
         $name = $row[0]; $p = $row[1]; $full = $row[2]
@@ -399,7 +556,7 @@ $form.Add_Paint({
     foreach ($r in $rows) {
         $c = $Colors[$r.color]; if (-not $c) { $c = $Colors.gray }
         $textX = $Pad
-        $mainColor = if ($r.remaining -le 0 -or $r.color -eq 'red') { $Colors.red } else { $TextColor }
+        $mainColor = if ($r.dim) { $DimColor } elseif ($r.remaining -le 0 -or $r.color -eq 'red') { $Colors.red } else { $TextColor }
         $sw = Text-W $g $r.sub $FontSub; $mw = Text-W $g $r.main $FontMain
         $right = ($script:Cfg.align -eq 'right')
         $tx = if ($right) { $form.Width - $Pad - $mw } else { $textX }
@@ -442,7 +599,7 @@ $RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'; $RunName = 'Cla
 $PwshExe = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe'; if (-not (Test-Path $PwshExe)) { $PwshExe = (Get-Process -Id $PID).Path }
 $RunCmd = 'wscript.exe "{0}"' -f (Join-Path $PSScriptRoot 'ClaudeUsageWidget.vbs')   # автозапуск через VBS-лаунчер (скрытая консоль)
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
-$mi = New-Object System.Windows.Forms.ToolStripMenuItem (T 'Обновить сейчас' 'Refresh now'); $mi.Add_Click({ Get-Usage; $form.Invalidate() }); $menu.Items.Add($mi) | Out-Null
+$mi = New-Object System.Windows.Forms.ToolStripMenuItem (T 'Обновить сейчас' 'Refresh now'); $mi.Add_Click({ $script:NextFetch = [datetime]::MinValue; Get-Usage; Update-Tip; $form.Invalidate() }); $menu.Items.Add($mi) | Out-Null   # «сейчас» — и в обход паузы после ошибок
 $mi = New-Object System.Windows.Forms.ToolStripMenuItem (T 'Открыть панель usage на claude.ai' 'Open the usage page on claude.ai'); $mi.Add_Click({ Start-Process 'https://claude.ai/settings/usage' }); $menu.Items.Add($mi) | Out-Null
 $miAuto2 = New-Object System.Windows.Forms.ToolStripMenuItem (T 'На панели задач (авто-позиция)' 'On the taskbar (auto position)'); $miAuto2.CheckOnClick = $true; $miAuto2.Checked = [bool]$script:Cfg.auto
 $miAuto2.Add_Click({ $script:Cfg.auto = $this.Checked; Save-Cfg; Place-Window; $form.Invalidate() }); $menu.Items.Add($miAuto2) | Out-Null

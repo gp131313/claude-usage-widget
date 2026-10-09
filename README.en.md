@@ -97,10 +97,23 @@ curl -s localhost:8766/usage.json | python3 -m json.tool
 
 Root is not needed. Port 8766 must be reachable from the Windows machine (LAN/VPN).
 
-The Claude Code token lives for about 8 hours and is refreshed only when Claude Code itself talks to the API. If
-Claude Code stays idle for long, the server gets a 401, the JSON gets `stale: true`, and the widget turns grey.
-The server **deliberately does not refresh the token itself**, so as not to break the Claude Code session (the
-refresh token rotates).
+The Claude Code token lives for about 8 hours, and Claude Code refreshes it only when it talks to the API itself.
+So once the token has expired, the server refreshes it with the refresh token (the same way Claude Code and the
+widget's standalone mode do) and writes it back to the same file — see the race note under Limitations. Room for
+the write is checked before the refresh: if the folder is not writable or the disk is full, the refresh is skipped
+(the refresh token is not spent) and `error` says `token refresh skipped: …`. If the file cannot be replaced after
+the refresh has already happened, the server keeps the new tokens in memory and retries the write on every poll:
+by then the old refresh token is already spent. To turn refreshing off, set `"auto_refresh": false`
+in `config.json`: then, while Claude Code is idle, the server waits for it to refresh the token, the data goes
+stale (`stale: true`) and the widget turns grey.
+
+After an API refusal (401, 429, 5xx, including the token-refresh endpoint) the server pauses: 5, 10, 20 min… up
+to `max_backoff_sec` (30 min), and at least as long as `Retry-After` asks if the response has one (up to 6 h).
+Anthropic answers frequent requests with a dead token with 429, and then even the token refresh fails. Network
+failures do not lengthen the pause. `usage.json` shows `consecutive_errors` and `next_poll_at`. All `config.json`
+keys except `bind` and `port` apply without a restart; an invalid value is replaced with the previous one, an
+unreadable file (half-saved, for example) keeps all previous settings, and numbers are clamped to sane limits
+(`poll_sec`, for example, from 30 s to a day).
 
 ### Widget by hand (Windows 10/11, PowerShell 7; falls back to Windows PowerShell 5.1)
 
@@ -124,6 +137,15 @@ terminal, ignores that flag and shows a console window; it does respect the hidd
   Fable limit; for the weekly limits — an even pace for the rest of the week (% per day, rounded to 10%).
 - **Sign in to Claude…** (standalone mode): opens Claude Code to sign in.
 - **Autostart** (HKCU\...\Run).
+
+### Stale data
+
+If the data is more than 30 minutes old (the server cannot reach Anthropic, or the widget cannot reach the server),
+the widget turns grey: the first line shows how old the data is and why: `error 429` (API refusal or usage server error), `token: 429`
+(token refresh refused), `offline`, `token expired` (the server has `auto_refresh` off), `sign in`. The week line
+keeps the last known value in a dimmed colour. The hover tooltip shows the time of the last update and the error
+text. In standalone mode the widget also backs off after API refusals: 2, 4, 8… min, up to 30; with no network it
+retries after 2 min, as before. "Refresh now" in the menu fetches the data right away, skipping the pause.
 
 ## Technical notes
 
@@ -166,9 +188,11 @@ docs/                    screenshots for the README
 
 - Subscription accounts only (Claude Code OAuth). The endpoint returns nothing for API keys.
 - The usage and token-refresh endpoints are undocumented; Anthropic may change them.
-- Standalone mode refreshes the token itself. If Claude Code is running on the same PC at that moment, a race for
-  the refresh token is possible (it is single-use): in the worst case Claude Code asks you to sign in again. The
-  widget refreshes the token only once it has already expired, to keep this to a minimum.
+- Standalone mode and the server refresh the token themselves. If Claude Code is running on the same machine at
+  that moment, a race for the refresh token is possible (it is single-use): in the worst case Claude Code asks you
+  to sign in again. To keep this to a minimum, both refresh the token only once it has already expired or the API
+  has rejected it (401 — at most one refresh per token), and re-read the file right before the refresh in case
+  Claude Code has already done it.
 - The Windows 11 taskbar does not accept third-party deskbands, so the widget is a separate borderless topmost
   window rather than a part of the taskbar.
 - Windows Widgets (Win+W) require an MSIX package with `IWidgetProvider` — not worth the effort.
